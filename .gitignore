@@ -1,0 +1,35 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+
+# Swift Package Manager / build output
+.build/
+.swiftpm/
+Packages/
+Package.resolved
+*.o
+*.dSYM/
+
+# Xcode
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+
+# App bundle & distribution artifacts
+*.app/
+dist/
+*.dmg
+*.zip
+
+# Backups / temp
+*.bak
+*.orig
+*.tmp
+*~
+
+# Local tooling config
+.claude/settings.local.json
