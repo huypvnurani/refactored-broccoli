@@ -57,10 +57,10 @@ final class StatusPresenter {
         menuLines = detailLines(s)
     }
 
-    /// Menu-bar text: always a number, including 0W. A leading "*" means the Mac
+    /// Menu-bar text: always a number, including 0W. A leading "›" means the Mac
     /// is running on battery; plugged into the charger, the number stands alone.
     func menuBarText(_ s: PowerSnapshot) -> String {
-        let mark = s.adapterConnected ? "" : "*"
+        let mark = s.adapterConnected ? "" : "›"
         return mark + String(format: "%.0fW", watts(s).rounded())
     }
 
