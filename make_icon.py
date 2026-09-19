@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate Mac Charge app icon.
+"""Generate MacCharge app icon.
 
 Priority:
   1. If ./logo.png (or ./logo.jpg) exists, use that artwork (rounded + resized).

@@ -16,7 +16,7 @@ struct MacChargeApp: App {
 private struct AboutPane: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Mac Charge").font(.system(size: 15, weight: .bold))
+            Text("MacCharge").font(.system(size: 15, weight: .bold))
             Text("Version 1.1.0").font(.system(size: 12)).foregroundStyle(.secondary)
             Divider()
             Text("The wattage shows in the menu bar and on the Dock icon.\nClosing the window keeps the app running in the background; click the wattage to bring it back.")
@@ -81,7 +81,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 contentRect: NSRect(x: 0, y: 0, width: 1200, height: 840),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                 backing: .buffered, defer: false)
-            w.title = "Mac Charge"
+            w.title = "MacCharge"
             w.titleVisibility = .hidden
             w.titlebarAppearsTransparent = true
             w.isReleasedWhenClosed = false          // so it can be reopened later

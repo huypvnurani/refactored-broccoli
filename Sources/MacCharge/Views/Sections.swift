@@ -461,7 +461,7 @@ struct SettingsSection: View {
                         cardTitle("Startup", icon: "power")
                         Toggle(isOn: $prefs.launchAtLogin) {
                             settingLabel("Launch at login",
-                                         "Mac Charge starts in the background every time you log in to macOS.")
+                                         "MacCharge starts in the background every time you log in to macOS.")
                         }
                         .toggleStyle(.switch).tint(Theme.green)
                         if let err = prefs.loginItemError {

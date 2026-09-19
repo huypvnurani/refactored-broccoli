@@ -53,7 +53,7 @@ final class Preferences: ObservableObject {
         }
     }
 
-    /// Start Mac Charge automatically when the user logs in.
+    /// Start MacCharge automatically when the user logs in.
     @Published var launchAtLogin: Bool {
         didSet {
             guard launchAtLogin != (SMAppService.mainApp.status == .enabled) else { return }

@@ -41,7 +41,7 @@ final class StatusPresenter {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
         item.button?.title = "–"
-        item.button?.toolTip = "Mac Charge"
+        item.button?.toolTip = "MacCharge"
         item.button?.target = self
         item.button?.action = #selector(statusItemClicked)
         item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
@@ -72,10 +72,13 @@ final class StatusPresenter {
         return out > 0.5 ? out : Double(s.adapterWatts)
     }
 
+    /// Same "›" prefix as the menu bar. The badge oval fits about five
+    /// characters, so "›23W" stays legible.
     private func dockBadge(_ s: PowerSnapshot) -> String? {
         let rounded = watts(s).rounded()
         guard rounded >= 1 else { return nil }
-        return String(format: "%.0fW", rounded)
+        let mark = s.adapterConnected ? "" : "›"
+        return mark + String(format: "%.0fW", rounded)
     }
 
     private func detailLines(_ s: PowerSnapshot) -> [String] {
@@ -119,10 +122,10 @@ final class StatusPresenter {
             menu.addItem(row)
         }
         menu.addItem(.separator())
-        let open = NSMenuItem(title: "Open Mac Charge", action: #selector(openApp), keyEquivalent: "")
+        let open = NSMenuItem(title: "Open MacCharge", action: #selector(openApp), keyEquivalent: "")
         open.target = self
         menu.addItem(open)
-        let quit = NSMenuItem(title: "Quit Mac Charge", action: #selector(quit), keyEquivalent: "q")
+        let quit = NSMenuItem(title: "Quit MacCharge", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
         return menu

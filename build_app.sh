@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds Mac Charge into a double-clickable .app bundle.
+# Builds MacCharge into a double-clickable .app bundle.
 #   ./build_app.sh            → universal binary (Apple Silicon + Intel)
 #   ./build_app.sh --native   → faster build for THIS Mac's architecture only
 #   ./build_app.sh --zip      → also produce a distributable dist/ zip
@@ -24,7 +24,7 @@ echo "▸ Building release binary ($MODE)…"
 swift build -c release "${ARCH_ARGS[@]}"
 BIN="$(swift build -c release "${ARCH_ARGS[@]}" --show-bin-path)/MacCharge"
 
-APP="Mac Charge.app"
+APP="MacCharge.app"
 echo "▸ Assembling \"$APP\"…"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
@@ -36,8 +36,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key><string>Mac Charge</string>
-    <key>CFBundleDisplayName</key><string>Mac Charge</string>
+    <key>CFBundleName</key><string>MacCharge</string>
+    <key>CFBundleDisplayName</key><string>MacCharge</string>
     <key>CFBundleIdentifier</key><string>com.urani.maccharge</string>
     <key>CFBundleVersion</key><string>1.1.0</string>
     <key>CFBundleShortVersionString</key><string>1.1.0</string>
@@ -54,7 +54,7 @@ PLIST
 # --- Spotlight keywords -------------------------------------------------
 # Writes kMDItemKeywords + a Finder comment onto the bundle so Spotlight finds
 # the app by terms other than its name. Edit the list below as you like.
-SPOTLIGHT_KEYWORDS="Mac Charge, MacCharge, power, charge, wat, watt, battery, batt, pin, sac, sạc, sac pin, pin macbook, charger, adapter, battery health, do pin"
+SPOTLIGHT_KEYWORDS="MacCharge, Mac Charge, power, charge, wat, watt, battery, batt, pin, sac, sạc, sac pin, pin macbook, charger, adapter, battery health, do pin"
 python3 - "$APP" "$SPOTLIGHT_KEYWORDS" <<'PYKW'
 import plistlib, subprocess, sys
 app, raw = sys.argv[1], sys.argv[2]

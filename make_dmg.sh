@@ -1,5 +1,5 @@
 #!/bin/bash
-# Packages Mac Charge into a drag-to-Applications .dmg.
+# Packages MacCharge into a drag-to-Applications .dmg.
 #
 # If a "Developer ID Application" certificate is in the keychain the app is
 # signed with it, and if a notarytool keychain profile exists the app and the
@@ -11,7 +11,7 @@
 set -e
 cd "$(dirname "$0")"
 
-APP="Mac Charge.app"
+APP="MacCharge.app"
 VERSION="1.1.0"
 NOTARY_PROFILE="${NOTARY_PROFILE:-maccharge-notary}"
 
@@ -46,22 +46,22 @@ ln -s /Applications "$STAGING/Applications"
 # Short install note for recipients.
 if [ "$NOTARIZED" = "1" ]; then
 cat > "$STAGING/README - How to open.txt" <<'TXT'
-INSTALLING Mac Charge
+INSTALLING MacCharge
 =====================
-1. Drag "Mac Charge" into the Applications folder (the icon next to it).
+1. Drag "MacCharge" into the Applications folder (the icon next to it).
 2. Open it from Launchpad or Applications. That is all — the app is signed and
    notarized by Apple, so no security warning appears.
 TXT
 else
 cat > "$STAGING/README - How to open.txt" <<'TXT'
-INSTALLING Mac Charge
+INSTALLING MacCharge
 =====================
-1. Drag "Mac Charge" into the Applications folder (the icon next to it).
+1. Drag "MacCharge" into the Applications folder (the icon next to it).
 2. On first launch macOS may say the developer cannot be verified:
    . Open  System Settings > Privacy & Security
-   . Scroll down and click "Open Anyway" on the Mac Charge line.
+   . Scroll down and click "Open Anyway" on the MacCharge line.
    Or run this single command in Terminal:
-       xattr -dr com.apple.quarantine "/Applications/Mac Charge.app"
+       xattr -dr com.apple.quarantine "/Applications/MacCharge.app"
 3. That is it. It opens normally from then on.
 TXT
 fi
@@ -70,7 +70,7 @@ mkdir -p dist
 DMG="dist/MacCharge-$VERSION.dmg"
 rm -f "$DMG"
 echo "▸ Creating $DMG…"
-hdiutil create -volname "Mac Charge" -srcfolder "$STAGING" \
+hdiutil create -volname "MacCharge" -srcfolder "$STAGING" \
     -ov -format UDZO "$DMG" >/dev/null
 rm -rf "$STAGING"
 
