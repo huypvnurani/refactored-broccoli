@@ -31,5 +31,9 @@ dist/
 *.tmp
 *~
 
+# Editors
+.vscode/
+.idea/
+
 # Local tooling config
-.claude/settings.local.json
+.claude/
