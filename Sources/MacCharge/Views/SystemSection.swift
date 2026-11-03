@@ -1,4 +1,5 @@
 import SwiftUI
+import SMCCore
 
 struct SystemSection: View {
     @ObservedObject var sys: SystemMonitor
@@ -34,6 +35,7 @@ struct SystemSection: View {
     private var fanSubtitle: String {
         guard sys.hasFans, !sys.fans.isEmpty else { return "No cooling fan" }
         let per = sys.fans.map { "F\($0.id + 1): \($0.rpm)" }.joined(separator: " · ")
+        if sys.fans.contains(where: \.forced) { return "Manual — \(per)" }
         return fansAllIdle ? "Idle — \(per)" : per
     }
     private var fanHelp: String {
@@ -42,7 +44,8 @@ struct SystemSection: View {
         }
         let range = f.max > 0 ? " Range: \(f.min)–\(f.max) RPM." : ""
         return "Cooling fan speed in revolutions per minute." + range +
-               " 0 RPM is normal — Apple Silicon MacBooks stop the fans when the machine is cool enough and only spin them up under load."
+               " 0 RPM is normal — Apple Silicon MacBooks stop the fans when the machine is cool enough and only spin them up under load." +
+               " Set the speed yourself in the Cooling tab."
     }
 
     var body: some View {

@@ -22,13 +22,18 @@ python3 make_icon.py || echo "  (icon generation skipped)"
 
 echo "▸ Building release binary ($MODE)…"
 swift build -c release "${ARCH_ARGS[@]}"
-BIN="$(swift build -c release "${ARCH_ARGS[@]}" --show-bin-path)/MacCharge"
+BIN_DIR="$(swift build -c release "${ARCH_ARGS[@]}" --show-bin-path)"
+BIN="$BIN_DIR/MacCharge"
+HELPER="$BIN_DIR/MacChargeFanHelper"
 
 APP="MacCharge.app"
 echo "▸ Assembling \"$APP\"…"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/MacCharge"
+# Fan control writes the SMC, which only root may do: this auxiliary binary is
+# what the app installs setuid-root (behind an admin prompt) on first use.
+cp "$HELPER" "$APP/Contents/MacOS/maccharge-fanhelper"
 [ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
@@ -83,6 +88,8 @@ if [ -n "$SIGN_ID" ] && [ "$SIGN_ID" != "-" ]; then
   echo "▸ Signing: $SIGN_ID"
   # Inner binary first, then the bundle (--deep is deprecated by Apple).
   codesign --force --timestamp --options runtime \
+           --sign "$SIGN_ID" "$APP/Contents/MacOS/maccharge-fanhelper"
+  codesign --force --timestamp --options runtime \
            --sign "$SIGN_ID" "$APP/Contents/MacOS/MacCharge"
   codesign --force --timestamp --options runtime \
            --sign "$SIGN_ID" "$APP"
@@ -90,6 +97,7 @@ if [ -n "$SIGN_ID" ] && [ "$SIGN_ID" != "-" ]; then
   echo "✓ Signed with Developer ID (hardened runtime + secure timestamp)"
 else
   echo "▸ No Developer ID identity — ad-hoc signing (this Mac only)."
+  codesign --force --sign - "$APP/Contents/MacOS/maccharge-fanhelper" 2>/dev/null || true
   codesign --force --sign - "$APP/Contents/MacOS/MacCharge" 2>/dev/null || true
   codesign --force --sign - "$APP" 2>/dev/null || true
 fi

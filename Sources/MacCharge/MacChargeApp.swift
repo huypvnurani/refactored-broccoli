@@ -37,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Touch the shared monitors so polling starts even if no window opens.
         _ = PowerMonitor.shared
         _ = SystemMonitor.shared
+        _ = FanController.shared
         PowerMonitor.shared.interval = Preferences.shared.interval
 
         StatusPresenter.shared.onOpenApp = { [weak self] in self?.showMainWindow() }
@@ -48,11 +49,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// Closing the window leaves the menu-bar item running; quit from its menu or ⌘Q.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
+    /// Never leave a fan forced with the app gone and nothing watching the
+    /// temperature — manual mode is restored on the next launch instead.
+    func applicationWillTerminate(_ notification: Notification) {
+        MainActor.assumeIsolated { FanController.shared.releaseFansBeforeQuit() }
+    }
+
     /// Closing the window drops the app out of the Dock and the ⌘-Tab switcher,
     /// the way a Vietnamese IME does — only the menu-bar wattage stays behind.
     func windowWillClose(_ notification: Notification) {
         // Nothing is reading the SMC values with no window on screen.
         SystemMonitor.shared.windowVisible = false
+        FanController.shared.uiVisible = false
         guard Preferences.shared.hideDockOnClose else { return }
         // Deferred: switching policy inside the close itself upsets AppKit.
         DispatchQueue.main.async {

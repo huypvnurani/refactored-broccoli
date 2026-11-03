@@ -5,6 +5,7 @@ struct ContentView: View {
     @ObservedObject private var sys = SystemMonitor.shared
     @State private var selection: SidebarItem = .overview
     @ObservedObject private var prefs = Preferences.shared
+    @ObservedObject private var fanCtl = FanController.shared
     @State private var spin = false
 
     var body: some View {
@@ -39,7 +40,9 @@ struct ContentView: View {
             .padding(.bottom, 14)
 
             ForEach(SidebarItem.allCases) { item in
-                sidebarRow(item)
+                SidebarRow(item: item, isSelected: selection == item) {
+                    withAnimation(.easeOut(duration: 0.15)) { selection = item }
+                }
             }
 
             Spacer()
@@ -66,34 +69,6 @@ struct ContentView: View {
         }
         .frame(width: 210)
         .background(Theme.sidebar)
-    }
-
-    private func sidebarRow(_ item: SidebarItem) -> some View {
-        Button {
-            withAnimation(.easeOut(duration: 0.15)) { selection = item }
-        } label: {
-            HStack(spacing: 11) {
-                Image(systemName: item.icon)
-                    .font(.system(size: 13, weight: .medium))
-                    .frame(width: 18)
-                Text(item.rawValue).font(.system(size: 13, weight: .medium))
-                Spacer(minLength: 0)
-            }
-            .foregroundStyle(selection == item ? Theme.textPrimary : Theme.textSecondary)
-            .padding(.horizontal, 11)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 9)
-                    .fill(selection == item ? Theme.green.opacity(0.16) : .clear)
-            )
-            .overlay(alignment: .leading) {
-                if selection == item {
-                    Capsule().fill(Theme.green).frame(width: 3, height: 16).padding(.leading, 2)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 8)
     }
 
     // MARK: Content
@@ -130,6 +105,7 @@ struct ContentView: View {
                 case .charger:  ChargerSection(monitor: monitor)
                 case .power:    PowerSection(monitor: monitor, sys: sys)
                 case .system:   SystemSection(sys: sys)
+                case .cooling:  CoolingSection(fan: fanCtl, sys: sys)
                 case .settings: SettingsSection(monitor: monitor, prefs: prefs)
                 }
             }
@@ -154,7 +130,53 @@ struct ContentView: View {
         case .charger:  return "Details about the connected power adapter."
         case .power:    return "Live voltage, current and wattage measurements."
         case .system:   return "CPU/GPU temperature, fans and the most demanding apps."
+        case .cooling:  return "Control the cooling fans and set their speed by hand."
         case .settings: return "Configure how MacCharge refreshes."
+        }
+    }
+}
+
+/// One navigation row in the sidebar. Kept as its own view so each row owns the
+/// hover state that tells the user how far the clickable card reaches.
+private struct SidebarRow: View {
+    let item: SidebarItem
+    let isSelected: Bool
+    let select: () -> Void
+
+    @State private var isHovering = false
+
+    private var fill: Color {
+        if isSelected { return Theme.green.opacity(0.16) }
+        return isHovering ? Color.white.opacity(0.06) : .clear
+    }
+
+    var body: some View {
+        Button(action: select) {
+            HStack(spacing: 11) {
+                Image(systemName: item.icon)
+                    .font(.system(size: 13, weight: .medium))
+                    .frame(width: 18)
+                Text(item.rawValue).font(.system(size: 13, weight: .medium))
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(isSelected || isHovering ? Theme.textPrimary : Theme.textSecondary)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 8)
+            .background(RoundedRectangle(cornerRadius: 9).fill(fill))
+            .overlay(alignment: .leading) {
+                if isSelected {
+                    Capsule().fill(Theme.green).frame(width: 3, height: 16).padding(.leading, 2)
+                }
+            }
+            // Without this the row is only clickable on the icon and the label:
+            // an unselected row's background is .clear, and SwiftUI does not
+            // hit-test transparent pixels. Rectangle claims the whole card.
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 8)
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.12)) { isHovering = hovering }
         }
     }
 }

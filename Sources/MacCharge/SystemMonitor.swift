@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import SMCCore
 
 struct ProcInfo: Identifiable, Equatable {
     let id = UUID()

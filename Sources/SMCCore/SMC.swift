@@ -1,15 +1,24 @@
 import Foundation
 import IOKit
 
-/// Minimal AppleSMC reader for temperature sensors and fan speeds.
+/// Minimal AppleSMC reader/writer for temperature sensors and fan speeds.
 /// Layout mirrors the well-known SMCParamStruct used by community SMC tools.
-final class SMC {
+///
+/// Shared by the app (reads) and by `maccharge-fanhelper` (fan writes, which the
+/// SMC only accepts from root).
+public final class SMC {
     private var conn: io_connect_t = 0
-    private(set) var isOpen = false
+    public private(set) var isOpen = false
+
+    /// IOKit status of the last call — `kIOReturnNotPrivileged` is the one worth
+    /// telling the user about, since it means "this needs to run as root".
+    public private(set) var lastStatus: kern_return_t = KERN_SUCCESS
 
     // Cached keys discovered on first enumeration (so refreshes stay cheap).
     private var tempKeys: [String]? = nil
     private var fanKeys: [String]? = nil
+
+    public init() {}
 
     // MARK: C structs
 
@@ -39,12 +48,14 @@ final class SMC {
 
     private let kKernelIndex: UInt32 = 2
     private let kCmdReadBytes: UInt8 = 5
+    private let kCmdWriteBytes: UInt8 = 6
     private let kCmdReadKeyInfo: UInt8 = 9
     private let kCmdReadIndex: UInt8 = 8
 
     // MARK: Lifecycle
 
-    func open() -> Bool {
+    @discardableResult
+    public func open() -> Bool {
         let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("AppleSMC"))
         guard service != 0 else { return false }
         defer { IOObjectRelease(service) }
@@ -53,7 +64,7 @@ final class SMC {
         return isOpen
     }
 
-    func close() {
+    public func close() {
         if conn != 0 { IOServiceClose(conn); conn = 0 }
         isOpen = false
     }
@@ -76,6 +87,7 @@ final class SMC {
         var outSize = MemoryLayout<SMCParamStruct>.stride
         let inSize = MemoryLayout<SMCParamStruct>.stride
         let r = IOConnectCallStructMethod(conn, kKernelIndex, &input, inSize, &output, &outSize)
+        lastStatus = r
         guard r == kIOReturnSuccess, output.result == 0 else { return nil }
         return output
     }
@@ -89,7 +101,7 @@ final class SMC {
     }
 
     /// Read a key and decode into a Double according to its SMC data type.
-    func readDouble(_ key: String) -> Double? {
+    public func readDouble(_ key: String) -> Double? {
         guard isOpen, let info = keyInfo(key), info.size > 0 else { return nil }
         var input = SMCParamStruct()
         input.key = fourCC(key)
@@ -123,6 +135,53 @@ final class SMC {
         }
     }
 
+    /// Write a numeric value into a key, encoded in whatever type the SMC says the
+    /// key has. Returns false when the key is missing, has a type this encoder
+    /// doesn't know, or the SMC refuses the write (not root → `lastStatus` is
+    /// `kIOReturnNotPrivileged`).
+    @discardableResult
+    public func writeDouble(_ key: String, _ value: Double) -> Bool {
+        guard isOpen, let info = keyInfo(key), info.size > 0, info.size <= 32 else { return false }
+        var payload = [UInt8](repeating: 0, count: 32)
+        switch keyString(info.type) {
+        case "flt ":
+            // SMC floats are little-endian, unlike its integers.
+            let bits = Float(value).bitPattern
+            payload[0] = UInt8(bits & 0xFF)
+            payload[1] = UInt8((bits >> 8) & 0xFF)
+            payload[2] = UInt8((bits >> 16) & 0xFF)
+            payload[3] = UInt8((bits >> 24) & 0xFF)
+        case "ui8 ":
+            payload[0] = UInt8(clamping: Int(value.rounded()))
+        case "ui16":
+            let v = UInt16(clamping: Int(value.rounded()))
+            payload[0] = UInt8(v >> 8); payload[1] = UInt8(v & 0xFF)
+        case "ui32":
+            let v = UInt32(clamping: Int(value.rounded()))
+            payload[0] = UInt8((v >> 24) & 0xFF); payload[1] = UInt8((v >> 16) & 0xFF)
+            payload[2] = UInt8((v >> 8) & 0xFF);  payload[3] = UInt8(v & 0xFF)
+        case "fpe2":
+            let v = UInt16(clamping: Int((value * 4).rounded()))
+            payload[0] = UInt8(v >> 8); payload[1] = UInt8(v & 0xFF)
+        default:
+            return false
+        }
+
+        var input = SMCParamStruct()
+        input.key = fourCC(key)
+        input.keyInfo.dataSize = info.size
+        input.keyInfo.dataType = info.type
+        input.data8 = kCmdWriteBytes
+        withUnsafeMutableBytes(of: &input.bytes) { raw in
+            for i in 0..<32 { raw[i] = payload[i] }
+        }
+        return call(&input) != nil
+    }
+
+    /// True when the last failure was the SMC rejecting a write from a non-root
+    /// process, rather than a missing key.
+    public var lastFailureWasPrivilege: Bool { lastStatus == kIOReturnNotPrivileged }
+
     // MARK: Key enumeration
 
     private func keyCount() -> Int {
@@ -154,15 +213,21 @@ final class SMC {
 
     // MARK: Public reads
 
-    struct Thermal {
-        var cpu: Double?      // avg of P/E-core sensors
-        var gpu: Double?
-        var hottest: Double?
-        var sensorCount: Int = 0
+    public struct Thermal {
+        public var cpu: Double?      // avg of P/E-core sensors
+        public var gpu: Double?
+        public var hottest: Double?
+        public var sensorCount: Int = 0
+
+        public init(cpu: Double? = nil, gpu: Double? = nil, hottest: Double? = nil,
+                    sensorCount: Int = 0) {
+            self.cpu = cpu; self.gpu = gpu; self.hottest = hottest
+            self.sensorCount = sensorCount
+        }
     }
 
     /// Average CPU / GPU / peak temperature across discovered sensors (°C).
-    func thermal() -> Thermal {
+    public func thermal() -> Thermal {
         if tempKeys == nil { discoverKeys() }
         guard let keys = tempKeys, !keys.isEmpty else { return Thermal() }
         var cpu: [Double] = [], gpu: [Double] = [], all: [Double] = []
@@ -177,19 +242,44 @@ final class SMC {
         return Thermal(cpu: avg(cpu), gpu: avg(gpu), hottest: all.max(), sensorCount: all.count)
     }
 
-    struct Fan: Identifiable { let id: Int; let rpm: Int; let min: Int; let max: Int }
+    public struct Fan: Identifiable, Equatable {
+        public let id: Int
+        public let rpm: Int
+        public let min: Int
+        public let max: Int
+        /// Speed the firmware is currently aiming for (`F…Tg`).
+        public let target: Int
+        /// True while the fan is under forced/manual control (`F…Md` ≠ 0).
+        public let forced: Bool
 
-    /// Fan speeds in RPM plus each fan's min/max range (empty on fanless Macs).
-    func fans() -> [Fan] {
+        public init(id: Int, rpm: Int, min: Int, max: Int, target: Int = 0, forced: Bool = false) {
+            self.id = id; self.rpm = rpm; self.min = min; self.max = max
+            self.target = target; self.forced = forced
+        }
+
+        /// Whether this fan's speed can be set at all — a fan with no reported
+        /// range gives nothing sane to scale a slider against.
+        public var isControllable: Bool { max > min && min >= 0 }
+    }
+
+    /// Number of fans the SMC reports (0 on fanless Macs).
+    public func fanCount() -> Int { Int(readDouble("FNum") ?? 0) }
+
+    /// Fan speeds in RPM plus each fan's range, target and control mode
+    /// (empty on fanless Macs).
+    public func fans() -> [Fan] {
         if fanKeys == nil { discoverKeys() }
-        let n = Int(readDouble("FNum") ?? 0)
+        let n = fanCount()
         var result: [Fan] = []
         if n > 0 {
             for i in 0..<n {
                 if let v = readDouble("F\(i)Ac"), v >= 0 {
                     let mn = Int(readDouble("F\(i)Mn") ?? 0)
                     let mx = Int(readDouble("F\(i)Mx") ?? 0)
-                    result.append(Fan(id: i, rpm: Int(v), min: mn, max: mx))
+                    let tg = Int(readDouble("F\(i)Tg") ?? 0)
+                    let md = readDouble("F\(i)Md") ?? 0
+                    result.append(Fan(id: i, rpm: Int(v), min: mn, max: mx,
+                                      target: tg, forced: md != 0))
                 }
             }
         } else if let keys = fanKeys {
@@ -200,5 +290,28 @@ final class SMC {
             }
         }
         return result
+    }
+
+    // MARK: Fan control (root only)
+
+    /// SMC keys behind fan control. Kept here so the privileged helper has one
+    /// place to whitelist: it must never write anything else.
+    public enum FanKey {
+        public static func mode(_ index: Int) -> String { "F\(index)Md" }
+        public static func target(_ index: Int) -> String { "F\(index)Tg" }
+    }
+
+    /// Force `index` to hold `rpm`. The target is written before the mode flip so
+    /// the fan never spends a moment forced to a stale 0 RPM target.
+    @discardableResult
+    public func forceFan(_ index: Int, rpm: Int) -> Bool {
+        guard writeDouble(FanKey.target(index), Double(rpm)) else { return false }
+        return writeDouble(FanKey.mode(index), 1)
+    }
+
+    /// Hand `index` back to the firmware's own thermal control.
+    @discardableResult
+    public func releaseFan(_ index: Int) -> Bool {
+        writeDouble(FanKey.mode(index), 0)
     }
 }
