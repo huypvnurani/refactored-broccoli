@@ -23,7 +23,7 @@
 - **Power** — live system power draw (from the SMC power rails), power into/out of the battery, and a rolling chart.
 - **System** — CPU/GPU temperatures, fan speeds, and the top apps by CPU, memory and energy use.
 - **Cooling** — switch fans between Auto and Manual and set the target speed with a slider, with a built-in temperature safety cutoff.
-- **FolderTree** — scan the whole Mac, your home folder or any folder you pick (or drop in) and see which folders use the most space; click an item to Reveal in Finder, Get Info, Copy Path or Move to Trash. The Trash gets its own tab with Empty Trash.
+- **FolderTree** — scan the whole Mac, your home folder or any folder you pick (or drop in) and watch folder sizes fill in live. Left-click opens a folder, right-click offers Reveal in Finder, Get Info, Quick Look, Copy Path, Open in Terminal and Move to Trash. Filter by name, select several items (⌘/⇧-click, arrow keys, ⌘A), list the biggest files by kind or by last opened, colour items by their share of the parent, turn on a ring chart, and see where the rest of the disk goes (VM, Preboot, Recovery…). The Trash gets its own tab with Empty Trash.
 - **Runs quietly in the background** — closing the window keeps only the menu-bar item; launch at login is one toggle away.
 - Universal binary (Apple Silicon + Intel), native SwiftUI, no dependencies.
 

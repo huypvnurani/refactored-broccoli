@@ -44,8 +44,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleName</key><string>MacCharge</string>
     <key>CFBundleDisplayName</key><string>MacCharge</string>
     <key>CFBundleIdentifier</key><string>com.urani.maccharge</string>
-    <key>CFBundleVersion</key><string>1.2.0</string>
-    <key>CFBundleShortVersionString</key><string>1.2.0</string>
+    <key>CFBundleVersion</key><string>1.3.0</string>
+    <key>CFBundleShortVersionString</key><string>1.3.0</string>
     <key>CFBundleExecutable</key><string>MacCharge</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
@@ -113,7 +113,7 @@ echo "  Architectures: $(lipo -archs "$APP/Contents/MacOS/MacCharge" 2>/dev/null
 
 if [ "$MAKE_ZIP" = "1" ]; then
   mkdir -p dist
-  ZIP="dist/MacCharge-1.2.0-macOS12.zip"
+  ZIP="dist/MacCharge-1.3.0-macOS12.zip"
   rm -f "$ZIP"
   ditto -c -k --keepParent "$APP" "$ZIP"
   echo "✓ Zipped → $ZIP  ($(du -h "$ZIP" | cut -f1))"

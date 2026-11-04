@@ -17,7 +17,7 @@ private struct AboutPane: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("MacCharge").font(.system(size: 15, weight: .bold))
-            Text("Version 1.2.0 · macOS 12 edition").font(.system(size: 12)).foregroundStyle(.secondary)
+            Text("Version 1.3.0 · macOS 12 edition").font(.system(size: 12)).foregroundStyle(.secondary)
             Divider()
             Text("The wattage shows in the menu bar and on the Dock icon.\nClosing the window keeps the app running in the background; click the wattage to bring it back.")
                 .font(.system(size: 12))
