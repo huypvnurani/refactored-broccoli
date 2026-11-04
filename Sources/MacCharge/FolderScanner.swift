@@ -311,8 +311,8 @@ struct FolderWalker: Sendable {
 
 /// How the startup disk's APFS container is split between its volumes, read
 /// from `diskutil apfs list` (no admin rights needed).
-struct DiskBreakdown: Sendable {
-    struct Volume: Sendable, Identifiable {
+struct DiskBreakdown: Sendable, Codable {
+    struct Volume: Sendable, Codable, Identifiable {
         let name: String
         let role: String
         let used: Int64
@@ -408,6 +408,8 @@ final class FolderScanner: ObservableObject {
     @Published private(set) var lastScan: Date?
     @Published private(set) var lastScanScope: Scope?
     @Published private(set) var scanDuration: TimeInterval = 0
+    /// The results on screen were read back from the last session's save.
+    @Published private(set) var isRestored = false
     /// Bumped when the tree changes in place (an item left it), so views redraw.
     @Published private(set) var revision = 0
     @Published var lastError: String?
@@ -416,7 +418,42 @@ final class FolderScanner: ObservableObject {
     private var pollTimer: Timer?
     private var liveRevision = -1
 
-    private init() {}
+    private init() {
+        restoreSavedScan()
+    }
+
+    // MARK: Saved scan
+
+    /// Puts the last session's scan back on screen, unless a new one started.
+    private func restoreSavedScan() {
+        Task.detached(priority: .userInitiated) {
+            guard let saved = ScanStore.read() else { return }
+            let restored = ScanStore.restore(saved)
+            await MainActor.run {
+                guard self.root == nil, !self.isScanning else { return }
+                self.root = restored.root
+                self.largeFiles = restored.largeFiles
+                self.scope = restored.scope
+                self.lastScanScope = restored.scope
+                self.lastScan = saved.date
+                self.scanDuration = saved.duration
+                self.unreadableCount = saved.unreadable
+                self.breakdown = saved.breakdown
+                self.isRestored = true
+                // The Trash changes all the time: measure it fresh.
+                self.refreshTrash()
+            }
+        }
+    }
+
+    /// Writes the scan on screen to disk (the encoding runs in the background).
+    private func saveScan() {
+        guard let root, let lastScan, let lastScanScope else { return }
+        let saved = ScanStore.snapshot(root: root, scope: lastScanScope, date: lastScan,
+                                       duration: scanDuration, unreadable: unreadableCount,
+                                       largeFiles: largeFiles, breakdown: breakdown)
+        Task.detached(priority: .utility) { ScanStore.write(saved) }
+    }
 
     // MARK: Scanning
 
@@ -520,6 +557,8 @@ final class FolderScanner: ObservableObject {
         lastScan = Date()
         lastScanScope = scanScope
         scanDuration = Date().timeIntervalSince(started)
+        isRestored = false
+        saveScan()
     }
 
     /// Re-measures just the Trash (after something was moved into it or emptied).
@@ -667,12 +706,17 @@ final class FolderScanner: ObservableObject {
         largeFiles.removeAll { $0 === node || $0.id.hasPrefix(prefix) }
         guard let parent = node.parent else { revision += 1; return }
         parent.children.removeAll { $0 === node }
+        var top = parent
         var p: FolderNode? = parent
         while let a = p {
             a.size -= node.size
             a.fileCount -= node.fileCount
+            top = a
             p = a.parent
         }
         revision += 1
+        // Keep the saved copy in step, so a deleted folder does not come back
+        // on the next launch. Trash items are not part of the saved scan.
+        if top === root { saveScan() }
     }
 }

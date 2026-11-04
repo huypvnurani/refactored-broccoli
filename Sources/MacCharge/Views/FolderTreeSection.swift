@@ -107,6 +107,16 @@ struct FolderTreeSection: View {
         .frame(height: 140)
     }
 
+    private var lastScanText: String {
+        guard let date = scanner.lastScan else {
+            return "macOS may ask for access to Desktop, Documents and other folders."
+        }
+        let when = date.formatted(date: .abbreviated, time: .shortened)
+        guard scanner.isRestored else { return "Last scan \(when)" }
+        let ago = Self.relative.localizedString(for: date, relativeTo: Date())
+        return "Saved scan from \(when) · \(ago)"
+    }
+
     private var trashSubtitle: String {
         if !scanner.trashReadable { return "Needs Full Disk Access" }
         guard let t = scanner.trash else { return "Scanned with the folders" }
@@ -145,10 +155,13 @@ struct FolderTreeSection: View {
                     Spacer(minLength: 0)
                     Button("Stop") { scanner.cancel() }
                 } else {
-                    Text(scanner.lastScan.map { "Last scan \($0.formatted(date: .omitted, time: .shortened))" }
-                         ?? "macOS may ask for access to Desktop, Documents and other folders.")
-                        .font(.system(size: 11.5)).foregroundStyle(Theme.textMuted)
+                    Text(lastScanText)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(scanner.isRestored ? Theme.textSecondary : Theme.textMuted)
                         .lineLimit(1)
+                        .help(scanner.isRestored
+                              ? "These results were saved after the last scan, so they open without scanning. Rescan for fresh numbers."
+                              : "")
                     Spacer(minLength: 0)
                     Button("Full Disk Access…") { openFullDiskAccess() }
                         .help("A complete scan, the Trash included, needs MacCharge in System Settings → Privacy & Security → Full Disk Access.")
@@ -311,7 +324,7 @@ struct FolderTreeSection: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 330)
+            .frame(width: 300)
 
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(Theme.textMuted)
@@ -327,7 +340,9 @@ struct FolderTreeSection: View {
             }
             .padding(.horizontal, 8).padding(.vertical, 5)
             .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 7))
-            .frame(width: 200)
+            .frame(width: 170)
+
+            sortControl
 
             Spacer(minLength: 0)
             Toggle("Color by share", isOn: $colorByShare)
@@ -359,9 +374,8 @@ struct FolderTreeSection: View {
 
     private var columnHeader: some View {
         HStack(spacing: 10) {
-            sortHeader(headerTitle, .name)
+            Text(headerTitle)
             Spacer()
-            sortMenu
             if colorByShare {
                 HStack(spacing: 8) {
                     legendDot(Theme.yellow, "10%")
@@ -370,7 +384,7 @@ struct FolderTreeSection: View {
                 }
             }
             Text("OF PARENT").frame(width: 170, alignment: .leading)
-            sortHeader("SIZE", .size).frame(width: 80, alignment: .trailing)
+            Text("SIZE").frame(width: 80, alignment: .trailing)
         }
         .font(.system(size: 10.5, weight: .semibold))
         .tracking(0.4)
@@ -537,61 +551,29 @@ struct FolderTreeSection: View {
         }
     }
 
-    /// Picks a sort key; picking the current one again flips the direction.
-    private func sort(by key: SortKey) {
-        if sortKey == key {
-            sortAscending.toggle()
-        } else {
-            sortKey = key
-            sortAscending = key.ascendingByDefault
-        }
-    }
-
-    private var sortMenu: some View {
-        Menu {
-            ForEach(SortKey.allCases, id: \.self) { key in
-                Button {
-                    sort(by: key)
-                } label: {
-                    if key == sortKey {
-                        Label(key.title, systemImage: sortAscending ? "chevron.up" : "chevron.down")
-                    } else {
-                        Text(key.title)
-                    }
-                }
+    /// Sort key picker plus a button that flips the direction.
+    private var sortControl: some View {
+        HStack(spacing: 4) {
+            Picker("Sort by", selection: Binding(get: { sortKey }, set: { key in
+                // Each key starts in its natural direction; the arrow flips it.
+                guard key != sortKey else { return }
+                sortKey = key
+                sortAscending = key.ascendingByDefault
+            })) {
+                ForEach(SortKey.allCases, id: \.self) { Text($0.title).tag($0) }
             }
-            Divider()
-            Button(sortAscending ? "Descending" : "Ascending") { sortAscending.toggle() }
-        } label: {
-            HStack(spacing: 3) {
-                Image(systemName: "arrow.up.arrow.down")
-                Text(sortKey.title.uppercased())
-                Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 8, weight: .bold))
+            .pickerStyle(.menu)
+            .fixedSize()
+            Button {
+                sortAscending.toggle()
+            } label: {
+                Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: 18, height: 18)
             }
+            .help(sortAscending ? "Ascending — click for descending" : "Descending — click for ascending")
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("Sort the list. Click NAME or SIZE to sort by them; click again to flip the order.")
-    }
-
-    /// A column title that sorts by `key` when clicked and shows the direction.
-    private func sortHeader(_ title: String, _ key: SortKey) -> some View {
-        Button {
-            sort(by: key)
-        } label: {
-            HStack(spacing: 3) {
-                Text(title)
-                if sortKey == key {
-                    Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 8, weight: .bold))
-                }
-            }
-            .foregroundStyle(sortKey == key ? Theme.textSecondary : Theme.textMuted)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
+        .help("Sort the list. Biggest first by default.")
     }
 
     private func subtitle(for line: TreeLine) -> String? {
