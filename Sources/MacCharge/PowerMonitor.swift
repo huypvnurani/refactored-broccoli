@@ -119,19 +119,32 @@ final class PowerMonitor: ObservableObject {
 
         func int(_ key: String) -> Int? { props[key] as? Int }
         func bool(_ key: String) -> Bool? { props[key] as? Bool }
+        /// Intel Macs store negative readings (current while discharging) as
+        /// unsigned 64-bit, which `as? Int` rejects; reinterpret the bits.
+        func signed(_ key: String) -> Int? {
+            (props[key] as? NSNumber).map { Int(truncatingIfNeeded: $0.int64Value) }
+        }
 
         snap.batteryInstalled = bool("BatteryInstalled") ?? true
-        snap.currentCapacity = int("CurrentCapacity") ?? 0
+        // Apple silicon reports CurrentCapacity/MaxCapacity as a percentage
+        // (MaxCapacity == 100); Intel reports both in mAh, e.g. 3399 of 4300.
+        let current = int("CurrentCapacity") ?? 0
+        let maxCapacity = int("MaxCapacity") ?? 100
+        if maxCapacity > 100 {
+            snap.currentCapacity = min(100, Int((Double(current) / Double(maxCapacity) * 100).rounded()))
+        } else {
+            snap.currentCapacity = current
+        }
         snap.isCharging = bool("IsCharging") ?? false
         snap.fullyCharged = bool("FullyCharged") ?? false
         snap.externalConnected = bool("ExternalConnected") ?? false
         snap.cycleCount = int("CycleCount") ?? 0
         snap.designCapacity = int("DesignCapacity") ?? 0
         snap.nominalChargeCapacity = int("NominalChargeCapacity")
-            ?? int("AppleRawMaxCapacity") ?? 0
+            ?? int("AppleRawMaxCapacity") ?? (maxCapacity > 100 ? maxCapacity : 0)
         if let t = int("Temperature") { snap.temperatureC = Double(t) / 100.0 }
         if let v = int("Voltage") { snap.voltageV = Double(v) / 1000.0 }
-        snap.amperageMA = int("InstantAmperage") ?? int("Amperage") ?? 0
+        snap.amperageMA = signed("InstantAmperage") ?? signed("Amperage") ?? 0
         snap.serial = props["Serial"] as? String ?? props["BatterySerialNumber"] as? String ?? "—"
         if let tr = int("TimeRemaining") {
             snap.timeRemainingMinutes = (tr == 65535 || tr <= 0) ? -1 : tr
