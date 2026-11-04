@@ -12,7 +12,7 @@ set -e
 cd "$(dirname "$0")"
 
 APP="MacCharge.app"
-VERSION="1.2.0"
+VERSION="1.3.0"
 NOTARY_PROFILE="${NOTARY_PROFILE:-maccharge-notary}"
 
 echo "▸ Building universal app first…"
