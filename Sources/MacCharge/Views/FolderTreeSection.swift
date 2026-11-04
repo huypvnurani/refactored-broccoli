@@ -31,6 +31,9 @@ struct FolderTreeSection: View {
     @State private var keyMonitor: Any?
     @AppStorage("folderTree.showChart") private var showChart = false
     @AppStorage("folderTree.colorByShare") private var colorByShare = false
+    /// Biggest first unless the user picks otherwise; not remembered across launches.
+    @State private var sortKey: SortKey = .size
+    @State private var sortAscending = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -356,8 +359,9 @@ struct FolderTreeSection: View {
 
     private var columnHeader: some View {
         HStack(spacing: 10) {
-            Text(headerTitle)
+            sortHeader(headerTitle, .name)
             Spacer()
+            sortMenu
             if colorByShare {
                 HStack(spacing: 8) {
                     legendDot(Theme.yellow, "10%")
@@ -366,7 +370,7 @@ struct FolderTreeSection: View {
                 }
             }
             Text("OF PARENT").frame(width: 170, alignment: .leading)
-            Text("SIZE").frame(width: 80, alignment: .trailing)
+            sortHeader("SIZE", .size).frame(width: 80, alignment: .trailing)
         }
         .font(.system(size: 10.5, weight: .semibold))
         .tracking(0.4)
@@ -482,7 +486,7 @@ struct FolderTreeSection: View {
         }
         var out: [TreeLine] = []
         func walk(_ n: FolderNode, depth: Int) {
-            for c in n.children {
+            for c in ordered(n.children) {
                 out.append(TreeLine(node: c, owner: n, depth: depth))
                 if expanded.contains(c.id) { walk(c, depth: depth + 1) }
             }
@@ -494,7 +498,7 @@ struct FolderTreeSection: View {
         return out
     }
 
-    /// Every listed item whose name contains the query, biggest first.
+    /// The 500 biggest listed items whose name contains the query, in sort order.
     private func search(_ root: FolderNode) -> [FolderNode] {
         let q = query.lowercased()
         var hits: [FolderNode] = []
@@ -505,17 +509,89 @@ struct FolderTreeSection: View {
             }
         }
         walk(root)
-        return Array(hits.sorted { $0.size > $1.size }.prefix(500))
+        return ordered(Array(hits.sorted { $0.size > $1.size }.prefix(500)))
     }
 
     private var filteredLargeFiles: [FolderNode] {
         let cutoff = Date().addingTimeInterval(-182 * 86_400)
         let q = query.lowercased()
-        return scanner.largeFiles.filter { f in
+        return ordered(scanner.largeFiles.filter { f in
             (fileKind == .all || FileKind.of(f.url) == fileKind)
                 && (!staleOnly || (f.accessDate ?? .distantPast) < cutoff)
                 && (q.isEmpty || f.name.lowercased().contains(q))
+        })
+    }
+
+    // MARK: Sorting
+
+    /// `nodes` in the chosen order. Folders still being measured stay last, and
+    /// ties fall back to size so the order never jumps around.
+    private func ordered(_ nodes: [FolderNode]) -> [FolderNode] {
+        let key = sortKey
+        let asc = sortAscending
+        return nodes.sorted { a, b in
+            if a.pending != b.pending { return !a.pending }
+            let r = key.compare(a, b)
+            if r != .orderedSame { return asc ? r == .orderedAscending : r == .orderedDescending }
+            return a.size > b.size
         }
+    }
+
+    /// Picks a sort key; picking the current one again flips the direction.
+    private func sort(by key: SortKey) {
+        if sortKey == key {
+            sortAscending.toggle()
+        } else {
+            sortKey = key
+            sortAscending = key.ascendingByDefault
+        }
+    }
+
+    private var sortMenu: some View {
+        Menu {
+            ForEach(SortKey.allCases, id: \.self) { key in
+                Button {
+                    sort(by: key)
+                } label: {
+                    if key == sortKey {
+                        Label(key.title, systemImage: sortAscending ? "chevron.up" : "chevron.down")
+                    } else {
+                        Text(key.title)
+                    }
+                }
+            }
+            Divider()
+            Button(sortAscending ? "Descending" : "Ascending") { sortAscending.toggle() }
+        } label: {
+            HStack(spacing: 3) {
+                Image(systemName: "arrow.up.arrow.down")
+                Text(sortKey.title.uppercased())
+                Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Sort the list. Click NAME or SIZE to sort by them; click again to flip the order.")
+    }
+
+    /// A column title that sorts by `key` when clicked and shows the direction.
+    private func sortHeader(_ title: String, _ key: SortKey) -> some View {
+        Button {
+            sort(by: key)
+        } label: {
+            HStack(spacing: 3) {
+                Text(title)
+                if sortKey == key {
+                    Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                }
+            }
+            .foregroundStyle(sortKey == key ? Theme.textSecondary : Theme.textMuted)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func subtitle(for line: TreeLine) -> String? {
@@ -838,6 +914,54 @@ private func bytes(_ n: Int64) -> String {
 private func abbreviate(_ path: String) -> String {
     let home = FileManager.default.homeDirectoryForCurrentUser.path
     return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
+}
+
+/// What the list can be sorted by.
+private enum SortKey: String, CaseIterable {
+    case size, name, files, kind, opened
+
+    var title: String {
+        switch self {
+        case .size: return "Size"
+        case .name: return "Name"
+        case .files: return "Number of files"
+        case .kind: return "Kind"
+        case .opened: return "Last opened"
+        }
+    }
+
+    /// Names read A→Z and kinds group naturally; amounts and dates go biggest
+    /// or newest first.
+    var ascendingByDefault: Bool { self == .name || self == .kind }
+
+    func compare(_ a: FolderNode, _ b: FolderNode) -> ComparisonResult {
+        switch self {
+        case .size:
+            return a.size == b.size ? .orderedSame : (a.size < b.size ? .orderedAscending : .orderedDescending)
+        case .name:
+            return a.name.localizedStandardCompare(b.name)
+        case .files:
+            return a.fileCount == b.fileCount ? .orderedSame
+                : (a.fileCount < b.fileCount ? .orderedAscending : .orderedDescending)
+        case .kind:
+            if a.kind != b.kind { return Self.rank(a.kind) < Self.rank(b.kind) ? .orderedAscending : .orderedDescending }
+            let r = a.url.pathExtension.lowercased().localizedStandardCompare(b.url.pathExtension.lowercased())
+            return r != .orderedSame ? r : a.name.localizedStandardCompare(b.name)
+        case .opened:
+            // Only large files carry a date; everything else ties and falls back to size.
+            let da = a.accessDate ?? .distantPast
+            let db = b.accessDate ?? .distantPast
+            return da == db ? .orderedSame : (da < db ? .orderedAscending : .orderedDescending)
+        }
+    }
+
+    private static func rank(_ k: FolderNode.Kind) -> Int {
+        switch k {
+        case .folder: return 0
+        case .package: return 1
+        case .file: return 2
+        }
+    }
 }
 
 /// Groups for the Large Files filter, by file extension.
