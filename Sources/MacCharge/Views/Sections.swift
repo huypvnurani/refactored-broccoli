@@ -7,6 +7,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     case power = "Power"
     case system = "System"
     case cooling = "Cooling"
+    case folderTree = "FolderTree"
     case settings = "Settings"
 
     var id: String { rawValue }
@@ -18,6 +19,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .power: return "bolt.fill"
         case .system: return "cpu.fill"
         case .cooling: return "fanblades.fill"
+        case .folderTree: return "folder.fill"
         case .settings: return "gearshape.fill"
         }
     }

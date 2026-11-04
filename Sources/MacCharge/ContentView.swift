@@ -6,6 +6,7 @@ struct ContentView: View {
     @State private var selection: SidebarItem = .overview
     @ObservedObject private var prefs = Preferences.shared
     @ObservedObject private var fanCtl = FanController.shared
+    @ObservedObject private var folders = FolderScanner.shared
     @State private var spin = false
 
     var body: some View {
@@ -106,6 +107,7 @@ struct ContentView: View {
                 case .power:    PowerSection(monitor: monitor, sys: sys)
                 case .system:   SystemSection(sys: sys)
                 case .cooling:  CoolingSection(fan: fanCtl, sys: sys)
+                case .folderTree: FolderTreeSection(scanner: folders)
                 case .settings: SettingsSection(monitor: monitor, prefs: prefs)
                 }
             }
@@ -131,6 +133,7 @@ struct ContentView: View {
         case .power:    return "Live voltage, current and wattage measurements."
         case .system:   return "CPU/GPU temperature, fans and the most demanding apps."
         case .cooling:  return "Control the cooling fans and set their speed by hand."
+        case .folderTree: return "See which folders take up space, and clean up the Trash."
         case .settings: return "Configure how MacCharge refreshes."
         }
     }

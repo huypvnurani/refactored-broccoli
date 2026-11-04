@@ -52,6 +52,11 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
+    <key>NSDesktopFolderUsageDescription</key><string>FolderTree measures how much space the folders on your Desktop use.</string>
+    <key>NSDocumentsFolderUsageDescription</key><string>FolderTree measures how much space the folders in Documents use.</string>
+    <key>NSDownloadsFolderUsageDescription</key><string>FolderTree measures how much space the folders in Downloads use.</string>
+    <key>NSRemovableVolumesUsageDescription</key><string>FolderTree measures how much space folders on removable drives use.</string>
+    <key>NSNetworkVolumesUsageDescription</key><string>FolderTree measures how much space folders on network drives use.</string>
 </dict>
 </plist>
 PLIST
