@@ -49,7 +49,7 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundleExecutable</key><string>MacCharge</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>LSMinimumSystemVersion</key><string>14.0</string>
+    <key>LSMinimumSystemVersion</key><string>12.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>
     <key>NSDesktopFolderUsageDescription</key><string>FolderTree measures how much space the folders on your Desktop use.</string>
@@ -113,7 +113,7 @@ echo "  Architectures: $(lipo -archs "$APP/Contents/MacOS/MacCharge" 2>/dev/null
 
 if [ "$MAKE_ZIP" = "1" ]; then
   mkdir -p dist
-  ZIP="dist/MacCharge-1.2.0.zip"
+  ZIP="dist/MacCharge-1.2.0-macOS12.zip"
   rm -f "$ZIP"
   ditto -c -k --keepParent "$APP" "$ZIP"
   echo "✓ Zipped → $ZIP  ($(du -h "$ZIP" | cut -f1))"

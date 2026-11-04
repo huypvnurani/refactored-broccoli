@@ -29,12 +29,12 @@
 
 ## Yêu cầu
 
-- macOS 14 Sonoma trở lên
+- macOS 12 Monterey trở lên — đây là **bản dành cho macOS 12** (nhánh `macos12`). Máy macOS 14 trở lên hãy dùng bản chính.
 - Mac Apple Silicon hoặc Intel
 
 ## Cài đặt
 
-1. Tải `MacCharge-x.y.z.dmg` ở mục [Releases](../../releases/latest).
+1. Tải `MacCharge-x.y.z-macOS12.dmg` ở mục [Releases](../../releases).
 2. Mở file DMG và kéo **MacCharge** vào **Applications**.
 3. App đã ký Developer ID nhưng chưa notarize. Nếu macOS chặn lần mở đầu, chuột phải vào app → **Open**, hoặc vào **System Settings → Privacy & Security** và bấm **Open Anyway**.
 

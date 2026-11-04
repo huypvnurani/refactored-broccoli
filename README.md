@@ -29,12 +29,12 @@
 
 ## Requirements
 
-- macOS 14 Sonoma or later
+- macOS 12 Monterey or later — this is the **macOS 12 edition** (branch `macos12`). On macOS 14+ use the main edition.
 - Apple Silicon or Intel Mac
 
 ## Install
 
-1. Download `MacCharge-x.y.z.dmg` from [Releases](../../releases/latest).
+1. Download `MacCharge-x.y.z-macOS12.dmg` from [Releases](../../releases).
 2. Open the DMG and drag **MacCharge** into **Applications**.
 3. The app is signed with a Developer ID but not yet notarized. If macOS blocks the first launch, right-click the app → **Open**, or open **System Settings → Privacy & Security** and click **Open Anyway**.
 

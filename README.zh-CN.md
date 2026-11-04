@@ -29,12 +29,12 @@
 
 ## 系统要求
 
-- macOS 14 Sonoma 或更高版本
+- macOS 12 Monterey 或更高版本 —— 这是 **macOS 12 版**（`macos12` 分支）。macOS 14 及以上请使用主版本。
 - Apple Silicon 或 Intel Mac
 
 ## 安装
 
-1. 从 [Releases](../../releases/latest) 下载 `MacCharge-x.y.z.dmg`。
+1. 从 [Releases](../../releases) 下载 `MacCharge-x.y.z-macOS12.dmg`。
 2. 打开 DMG，将 **MacCharge** 拖入 **应用程序**。
 3. 应用已使用 Developer ID 签名，但尚未公证。若 macOS 阻止首次打开，请右键点击应用 → **打开**，或前往 **系统设置 → 隐私与安全性** 点击 **仍要打开**。
 

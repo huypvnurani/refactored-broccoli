@@ -67,7 +67,8 @@ TXT
 fi
 
 mkdir -p dist
-DMG="dist/MacCharge-$VERSION.dmg"
+# This branch builds the macOS 12 edition; main builds the macOS 14+ one.
+DMG="dist/MacCharge-$VERSION-macOS12.dmg"
 rm -f "$DMG"
 echo "▸ Creating $DMG…"
 hdiutil create -volname "MacCharge" -srcfolder "$STAGING" \

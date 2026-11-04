@@ -29,12 +29,12 @@
 
 ## 動作環境
 
-- macOS 14 Sonoma 以降
+- macOS 12 Monterey 以降 —— こちらは **macOS 12 版**（`macos12` ブランチ）です。macOS 14 以降ではメイン版をお使いください。
 - Apple Silicon または Intel 搭載の Mac
 
 ## インストール
 
-1. [Releases](../../releases/latest) から `MacCharge-x.y.z.dmg` をダウンロードします。
+1. [Releases](../../releases) から `MacCharge-x.y.z-macOS12.dmg` をダウンロードします。
 2. DMG を開き、**MacCharge** を **アプリケーション** フォルダへドラッグします。
 3. アプリは Developer ID で署名済みですが、まだ公証されていません。初回起動がブロックされた場合は、アプリを右クリック → **開く**、または **システム設定 → プライバシーとセキュリティ** で **このまま開く** をクリックしてください。
 
