@@ -30,7 +30,7 @@ struct ContentView: View {
                     .foregroundStyle(monitor.snapshot.batteryTint)
                     .frame(width: 34, height: 34)
                     .background(monitor.snapshot.batteryTint.opacity(0.14), in: RoundedRectangle(cornerRadius: 10))
-                    .contentTransition(.symbolEffect(.replace))
+                    .symbolReplaceTransition()
                 VStack(alignment: .leading, spacing: 1) {
                     Text("MacCharge").font(.system(size: 14, weight: .bold)).foregroundStyle(Theme.textPrimary)
                     Text("Battery & Power").font(.system(size: 11)).foregroundStyle(Theme.textMuted)

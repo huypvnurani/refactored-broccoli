@@ -32,7 +32,7 @@ struct CoolingSection: View {
         }
         .onDisappear { fan.uiVisible = false }
         // Presets and the safety cutoff change the value behind the slider's back.
-        .onChange(of: fan.percent) { _, new in
+        .onChange(of: fan.percent) { new in
             if abs(new - draft) > 0.5 { draft = new }
         }
     }
@@ -110,7 +110,7 @@ struct CoolingSection: View {
                     Text("\(Int(draft))%")
                         .font(.system(size: 14, weight: .bold, design: .rounded))
                         .foregroundStyle(tint)
-                        .contentTransition(.numericText())
+                        .numericTransition()
                 }
                 Slider(value: $draft, in: 0...100, step: 1) { editing in
                     if !editing { fan.percent = draft }

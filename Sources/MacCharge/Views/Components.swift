@@ -51,7 +51,7 @@ struct StatCard: View {
             Text(value)
                 .font(.system(size: emphasized ? 42 : 29, weight: .bold, design: .rounded))
                 .foregroundStyle(emphasized ? iconColor : valueColor)
-                .contentTransition(.numericText())
+                .numericTransition()
                 .minimumScaleFactor(0.6)
                 .lineLimit(1)
             if let subtitle {
@@ -142,7 +142,7 @@ struct MetricCard: View {
                 Text(value)
                     .font(.system(size: 21, weight: .bold, design: .rounded))
                     .foregroundStyle(Theme.textPrimary)
-                    .contentTransition(.numericText())
+                    .numericTransition()
                 Text(status)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(statusColor)

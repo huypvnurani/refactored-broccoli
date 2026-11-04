@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "MacCharge",
     platforms: [
-        .macOS(.v14)
+        .macOS(.v12)
     ],
     targets: [
         // SMC access, shared by the app (reads) and the fan helper (writes).

@@ -143,12 +143,14 @@ struct FolderTreeSection: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(Theme.green, lineWidth: dropTargeted ? 2 : 0)
         )
-        .dropDestination(for: URL.self) { urls, _ in
-            guard !scanner.isScanning,
-                  let url = urls.first(where: { $0.hasDirectoryPath || isFolder($0) }) else { return false }
-            startScan(.custom(url))
+        .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
+            guard !scanner.isScanning, let provider = providers.first else { return false }
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                guard let url, isFolder(url) else { return }
+                DispatchQueue.main.async { startScan(.custom(url)) }
+            }
             return true
-        } isTargeted: { dropTargeted = $0 }
+        }
     }
 
     private var treeCard: some View {
@@ -188,7 +190,7 @@ struct FolderTreeSection: View {
             Text("SIZE").frame(width: 80, alignment: .trailing)
         }
         .font(.system(size: 10.5, weight: .semibold))
-        .tracking(0.4)
+        .compatTracking(0.4)
         .foregroundStyle(Theme.textMuted)
         .padding(.horizontal, 16).padding(.vertical, 7)
     }
