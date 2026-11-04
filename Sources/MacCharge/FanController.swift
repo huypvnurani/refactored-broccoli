@@ -20,7 +20,7 @@ final class FanController: ObservableObject {
 
     /// Helper command surface this build expects — bump it in both places when
     /// the helper's arguments change, so an old installed copy is spotted.
-    nonisolated static let expectedHelperVersion = "1"
+    nonisolated static let expectedHelperVersion = "2"
 
     /// Hottest sensor reading that hands the fans straight back to the firmware.
     /// A forced fan does not spin up on its own, so this is the safety net.

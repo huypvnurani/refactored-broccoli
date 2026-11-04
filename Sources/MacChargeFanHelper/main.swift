@@ -7,11 +7,12 @@ import SMCCore
 // setuid-root (once, behind an admin prompt) and shells out to it. Everything it
 // can do is in the switch below: report fan state, force a fan to an RPM inside
 // the range the firmware itself reports, or hand a fan back to automatic
-// control. It never writes any SMC key other than F<n>Md / F<n>Tg, never reads
+// control. It never writes any SMC key other than F<n>Md / F<n>Tg (or, on Intel
+// Macs without a T2 chip, the "FS! " force mask), never reads
 // stdin, and never invokes a shell — a setuid binary with a wider reach would be
 // a local privilege-escalation tool.
 
-let version = "1"
+let version = "2"
 
 func die(_ message: String, _ code: Int32 = 1) -> Never {
     FileHandle.standardError.write(Data(("maccharge-fanhelper: " + message + "\n").utf8))

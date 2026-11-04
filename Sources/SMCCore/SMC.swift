@@ -128,11 +128,25 @@ public final class SMC {
         case "sp78":
             let raw = Int16(bitPattern: UInt16(b[0]) << 8 | UInt16(b[1]))
             return Double(raw) / 256.0
-        case "fpe2":
-            return Double(UInt16(b[0]) << 8 | UInt16(b[1])) / 4.0
+        case "si8 ":
+            return Double(Int8(bitPattern: b[0]))
+        case "si16":
+            return Double(Int16(bitPattern: UInt16(b[0]) << 8 | UInt16(b[1])))
         default:
-            return nil
+            return Self.fixedPoint(type, b[0], b[1])
         }
+    }
+
+    /// Intel Macs keep most sensors in 16-bit fixed point: "fpXY" unsigned and
+    /// "spXY" signed, with the low hex digit giving the fraction bits — fpe2
+    /// (14.2), sp78 (7.8), sp96 and friends for temperatures and power rails.
+    private static func fixedPoint(_ type: String, _ hi: UInt8, _ lo: UInt8) -> Double? {
+        guard type.count == 4, let fraction = Int(String(type.last!), radix: 16) else { return nil }
+        let raw = UInt16(hi) << 8 | UInt16(lo)
+        let scale = Double(1 << fraction)
+        if type.hasPrefix("fp") { return Double(raw) / scale }
+        if type.hasPrefix("sp") { return Double(Int16(bitPattern: raw)) / scale }
+        return nil
     }
 
     /// Write a numeric value into a key, encoded in whatever type the SMC says the
@@ -213,6 +227,13 @@ public final class SMC {
 
     // MARK: Public reads
 
+    /// The hardware, not the slice running: true under Rosetta too.
+    public static let isAppleSilicon: Bool = {
+        var value: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        return sysctlbyname("hw.optional.arm64", &value, &size, nil, 0) == 0 && value == 1
+    }()
+
     public struct Thermal {
         public var cpu: Double?      // avg of P/E-core sensors
         public var gpu: Double?
@@ -230,13 +251,16 @@ public final class SMC {
     public func thermal() -> Thermal {
         if tempKeys == nil { discoverKeys() }
         guard let keys = tempKeys, !keys.isEmpty else { return Thermal() }
+        // Apple silicon: Tp…/Tc…/TC… = CPU cores, Tg…/TG… = GPU. Intel: TC… =
+        // CPU, TG… = GPU, while Tp… there is the power supply, not the processor.
+        let cpuPrefixes = Self.isAppleSilicon ? ["Tp", "Tc", "TC"] : ["TC"]
+        let gpuPrefixes = Self.isAppleSilicon ? ["Tg", "TG"] : ["TG"]
         var cpu: [Double] = [], gpu: [Double] = [], all: [Double] = []
         for k in keys {
             guard let v = readDouble(k), v > 5, v < 120 else { continue }
             all.append(v)
-            // Tp… = performance/efficiency CPU cores, Tg… = GPU (Apple Silicon).
-            if k.hasPrefix("Tp") || k.hasPrefix("Tc") || k.hasPrefix("TC") { cpu.append(v) }
-            if k.hasPrefix("Tg") || k.hasPrefix("TG") { gpu.append(v) }
+            if cpuPrefixes.contains(where: k.hasPrefix) { cpu.append(v) }
+            if gpuPrefixes.contains(where: k.hasPrefix) { gpu.append(v) }
         }
         func avg(_ a: [Double]) -> Double? { a.isEmpty ? nil : a.reduce(0,+)/Double(a.count) }
         return Thermal(cpu: avg(cpu), gpu: avg(gpu), hottest: all.max(), sensorCount: all.count)
@@ -277,9 +301,8 @@ public final class SMC {
                     let mn = Int(readDouble("F\(i)Mn") ?? 0)
                     let mx = Int(readDouble("F\(i)Mx") ?? 0)
                     let tg = Int(readDouble("F\(i)Tg") ?? 0)
-                    let md = readDouble("F\(i)Md") ?? 0
                     result.append(Fan(id: i, rpm: Int(v), min: mn, max: mx,
-                                      target: tg, forced: md != 0))
+                                      target: tg, forced: isForced(i)))
                 }
             }
         } else if let keys = fanKeys {
@@ -299,6 +322,28 @@ public final class SMC {
     public enum FanKey {
         public static func mode(_ index: Int) -> String { "F\(index)Md" }
         public static func target(_ index: Int) -> String { "F\(index)Tg" }
+        /// Intel Macs without a T2 chip have no F<n>Md: bit n of this ui16
+        /// puts fan n under forced control instead.
+        public static let forceBits = "FS! "
+    }
+
+    /// True when fan `index` has a per-fan mode key (Apple silicon, T2 Intel).
+    private func hasModeKey(_ index: Int) -> Bool {
+        keyInfo(FanKey.mode(index)) != nil
+    }
+
+    private func isForced(_ index: Int) -> Bool {
+        if hasModeKey(index) { return (readDouble(FanKey.mode(index)) ?? 0) != 0 }
+        guard let bits = readDouble(FanKey.forceBits) else { return false }
+        return (Int(bits) >> index) & 1 == 1
+    }
+
+    /// Sets or clears fan `index`'s bit in the Intel force mask.
+    private func setForceBit(_ index: Int, _ on: Bool) -> Bool {
+        guard let current = readDouble(FanKey.forceBits) else { return false }
+        var bits = Int(current)
+        if on { bits |= 1 << index } else { bits &= ~(1 << index) }
+        return writeDouble(FanKey.forceBits, Double(bits))
     }
 
     /// Force `index` to hold `rpm`. The target is written before the mode flip so
@@ -306,12 +351,14 @@ public final class SMC {
     @discardableResult
     public func forceFan(_ index: Int, rpm: Int) -> Bool {
         guard writeDouble(FanKey.target(index), Double(rpm)) else { return false }
-        return writeDouble(FanKey.mode(index), 1)
+        if hasModeKey(index) { return writeDouble(FanKey.mode(index), 1) }
+        return setForceBit(index, true)
     }
 
     /// Hand `index` back to the firmware's own thermal control.
     @discardableResult
     public func releaseFan(_ index: Int) -> Bool {
-        writeDouble(FanKey.mode(index), 0)
+        if hasModeKey(index) { return writeDouble(FanKey.mode(index), 0) }
+        return setForceBit(index, false)
     }
 }
