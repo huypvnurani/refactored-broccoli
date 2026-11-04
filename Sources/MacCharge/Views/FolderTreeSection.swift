@@ -27,7 +27,7 @@ struct FolderTreeSection: View {
     @State private var pendingDelete: [FolderNode] = []
     @State private var confirmEmpty = false
     @State private var dropTargeted = false
-    @State private var showGapDetails = false
+    @AppStorage("folderTree.showGapDetails") private var showGapDetails = false
     @State private var keyMonitor: Any?
     @AppStorage("folderTree.showChart") private var showChart = false
     @AppStorage("folderTree.colorByShare") private var colorByShare = false
@@ -39,8 +39,8 @@ struct FolderTreeSection: View {
         VStack(alignment: .leading, spacing: 14) {
             statCards
             controlCard
-            gapCard
             treeCard
+            gapCard
         }
         .onAppear(perform: installKeyMonitor)
         .onDisappear(perform: removeKeyMonitor)
@@ -185,7 +185,8 @@ struct FolderTreeSection: View {
     }
 
     /// Where the disk space the folders don't account for goes. Shown only after
-    /// a whole-Mac scan, and only when `diskutil` could be read.
+    /// a whole-Mac scan, and only when `diskutil` could be read; it sits under
+    /// the list as one line until opened.
     @ViewBuilder private var gapCard: some View {
         if !scanner.isScanning, scanner.lastScanScope == .wholeMac,
            let b = scanner.breakdown, let root = scanner.root {
