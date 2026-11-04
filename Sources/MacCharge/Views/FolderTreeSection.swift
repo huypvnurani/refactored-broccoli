@@ -1,40 +1,56 @@
 import SwiftUI
 import AppKit
+import Quartz
 
 /// Disk usage by folder: one scan measures every folder, the tree lists the
-/// biggest first, and clicking an item offers Finder actions. The Trash gets
-/// its own tab.
+/// biggest first, and right-clicking an item offers Finder actions. Large files
+/// and the Trash get their own tabs.
 struct FolderTreeSection: View {
     @ObservedObject var scanner: FolderScanner
 
-    enum Tab: Hashable { case folders, trash }
+    enum Tab: Hashable { case folders, largeFiles, trash }
     private enum ScopeChoice: Hashable { case wholeMac, home, folder }
 
     @State private var tab: Tab = .folders
-    @State private var expanded: Set<ObjectIdentifier> = []
-    @State private var selected: ObjectIdentifier?
-    @State private var pendingTrash: FolderNode?
-    @State private var pendingDelete: FolderNode?
+    @State private var expanded: Set<String> = []
+    @State private var selection: Set<String> = []
+    /// Where ⇧-click and ⇧-arrow ranges start.
+    @State private var anchor: String?
+    /// The row the arrow keys move from.
+    @State private var cursor: String?
+    @State private var scrollTarget: String?
+    @State private var query = ""
+    @State private var fileKind: FileKind = .all
+    @State private var staleOnly = false
+    @State private var pendingTrash: [FolderNode] = []
+    @State private var pendingDelete: [FolderNode] = []
     @State private var confirmEmpty = false
     @State private var dropTargeted = false
+    @State private var showGapDetails = false
+    @State private var keyMonitor: Any?
+    @AppStorage("folderTree.showChart") private var showChart = false
+    @AppStorage("folderTree.colorByShare") private var colorByShare = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 14) {
             statCards
             controlCard
+            gapCard
             treeCard
         }
-        .alert("Move to Trash?", isPresented: present($pendingTrash), presenting: pendingTrash) { node in
-            Button("Move to Trash", role: .destructive) { scanner.moveToTrash(node) }
+        .onAppear(perform: installKeyMonitor)
+        .onDisappear(perform: removeKeyMonitor)
+        .alert(trashTitle, isPresented: present($pendingTrash)) {
+            Button("Move to Trash", role: .destructive) { scanner.moveToTrash(pendingTrash) }
             Button("Cancel", role: .cancel) {}
-        } message: { node in
-            Text("“\(node.name)” (\(bytes(node.size))) will be moved to the Trash. You can put it back from there.")
+        } message: {
+            Text("\(describe(pendingTrash)) will be moved to the Trash. You can put it back from there.")
         }
-        .alert("Delete immediately?", isPresented: present($pendingDelete), presenting: pendingDelete) { node in
-            Button("Delete", role: .destructive) { scanner.deleteImmediately(node) }
+        .alert("Delete immediately?", isPresented: present($pendingDelete)) {
+            Button("Delete", role: .destructive) { scanner.deleteImmediately(pendingDelete) }
             Button("Cancel", role: .cancel) {}
-        } message: { node in
-            Text("“\(node.name)” (\(bytes(node.size))) will be deleted permanently. This cannot be undone.")
+        } message: {
+            Text("\(describe(pendingDelete)) will be deleted permanently. This cannot be undone.")
         }
         .alert("Empty the Trash?", isPresented: $confirmEmpty) {
             Button("Empty Trash", role: .destructive) { scanner.emptyTrash() }
@@ -67,7 +83,7 @@ struct FolderTreeSection: View {
             StatCard(icon: "folder.fill", iconColor: Theme.green,
                      title: "Scanned",
                      value: scanner.root.map { bytes($0.size) } ?? "—",
-                     subtitle: scanner.root.map { "\($0.fileCount.formatted()) files · \(scanner.root?.name ?? "")" }
+                     subtitle: scanner.root.map { "\($0.fileCount.formatted()) files · \($0.name)" }
                          ?? "Not scanned yet",
                      help: "Total size of everything the last scan could read.")
             StatCard(icon: "trash.fill", iconColor: Theme.orange,
@@ -84,7 +100,7 @@ struct FolderTreeSection: View {
                          ?? "folders macOS keeps private",
                      help: "Folders macOS would not let MacCharge list. Their size is missing from the totals; Full Disk Access fixes most of them.")
         }
-        .frame(height: 150)
+        .frame(height: 140)
     }
 
     private var trashSubtitle: String {
@@ -151,40 +167,204 @@ struct FolderTreeSection: View {
         } isTargeted: { dropTargeted = $0 }
     }
 
+    /// Where the disk space the folders don't account for goes. Shown only after
+    /// a whole-Mac scan, and only when `diskutil` could be read.
+    @ViewBuilder private var gapCard: some View {
+        if !scanner.isScanning, scanner.lastScanScope == .wholeMac,
+           let b = scanner.breakdown, let root = scanner.root {
+            let trashSize = scanner.trash?.size ?? 0
+            let hidden = max(0, b.browsable - root.size - trashSize)
+            let others = b.volumes.filter { $0.role != "System" && $0.role != "Data" && $0.used > 0 }
+            let rest = max(0, b.used - root.size - trashSize)
+            Card(padding: 12) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Button {
+                        withAnimation(.easeOut(duration: 0.15)) { showGapDetails.toggle() }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10, weight: .bold))
+                                .rotationEffect(.degrees(showGapDetails ? 90 : 0))
+                            Image(systemName: "chart.pie.fill").foregroundStyle(Theme.purple)
+                            Text("Disk in use \(bytes(b.used)) · folders found \(bytes(root.size)) · \(bytes(rest)) elsewhere")
+                                .font(.system(size: 12.5, weight: .semibold))
+                                .foregroundStyle(Theme.textPrimary)
+                            Spacer()
+                            Text(showGapDetails ? "Hide" : "Where is it?")
+                                .font(.system(size: 11.5)).foregroundStyle(Theme.textMuted)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Theme.textSecondary)
+
+                    if showGapDetails {
+                        VStack(spacing: 0) {
+                            gapRow("Folders found by the scan", root.size, Theme.green)
+                            if trashSize > 0 { gapRow("Trash", trashSize, Theme.orange) }
+                            if hidden > 0 {
+                                gapRow("Out of the scan's reach", hidden, Theme.yellow,
+                                       note: hiddenNote(b))
+                            }
+                            ForEach(others) { v in
+                                gapRow(volumeLabel(v), v.used, Theme.blue, note: volumeNote(v.role))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func gapRow(_ label: String, _ size: Int64, _ color: Color, note: String? = nil) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Circle().fill(color).frame(width: 7, height: 7)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(label).font(.system(size: 12.5)).foregroundStyle(Theme.textPrimary)
+                if let note {
+                    Text(note).font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                }
+            }
+            Spacer()
+            Text(bytes(size)).font(.system(size: 12.5, weight: .semibold, design: .rounded))
+                .foregroundStyle(Theme.textPrimary)
+        }
+        .padding(.vertical, 4)
+        .padding(.leading, 22)
+    }
+
+    private func hiddenNote(_ b: DiskBreakdown) -> String {
+        var parts = ["folders macOS keeps private", "file-system metadata"]
+        if scanner.unreadableCount > 0 { parts[0] = "\(scanner.unreadableCount.formatted()) private folders" }
+        if b.snapshotCount > 0 {
+            parts.insert("\(b.snapshotCount) local Time Machine snapshot\(b.snapshotCount == 1 ? "" : "s")", at: 0)
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    private func volumeLabel(_ v: DiskBreakdown.Volume) -> String {
+        v.role.isEmpty ? v.name : "\(v.name) volume"
+    }
+
+    private func volumeNote(_ role: String) -> String? {
+        switch role {
+        case "VM": return "Swap and the sleep image, managed by macOS"
+        case "Preboot": return "Files the Mac needs to start up"
+        case "Recovery": return "macOS Recovery"
+        case "Update": return "Staged macOS updates"
+        default: return nil
+        }
+    }
+
     private var treeCard: some View {
         Card(padding: 0) {
             VStack(spacing: 0) {
-                HStack(spacing: 12) {
-                    Picker("", selection: $tab) {
-                        Text("Folders").tag(Tab.folders)
-                        Text(scanner.trash.map { "Trash · \(bytes($0.size))" } ?? "Trash").tag(Tab.trash)
+                treeHeader
+                if tab == .largeFiles {
+                    Divider().overlay(Theme.separator)
+                    largeFilesBar
+                }
+                Divider().overlay(Theme.separator)
+                HStack(spacing: 0) {
+                    VStack(spacing: 0) {
+                        columnHeader
+                        Divider().overlay(Theme.separator)
+                        treeBody
                     }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .frame(width: 260)
-                    Spacer()
-                    if tab == .trash {
+                    if showChart, tab != .largeFiles, let root = currentRoot, !root.children.isEmpty {
+                        Divider().overlay(Theme.separator)
+                        SunburstChart(focus: chartFocus(in: root),
+                                      onPick: { reveal($0) },
+                                      onUp: { goUp(in: root) })
+                            .frame(width: 300)
+                            .padding(14)
+                    }
+                }
+                if tab == .trash && scanner.trashReadable {
+                    Divider().overlay(Theme.separator)
+                    HStack(spacing: 10) {
+                        Text("Right-click an item to delete it on its own.")
+                            .font(.system(size: 11.5)).foregroundStyle(Theme.textMuted)
+                        Spacer()
                         Button("Open Trash") { scanner.openTrash() }
                         Button("Empty Trash…") { confirmEmpty = true }
                             .disabled(scanner.trash?.children.isEmpty ?? true)
                     }
+                    .padding(.horizontal, 16).padding(.vertical, 10)
                 }
-                .padding(.horizontal, 16).padding(.vertical, 12)
-                Divider().overlay(Theme.separator)
-                columnHeader
-                Divider().overlay(Theme.separator)
-                treeBody
             }
             .frame(maxHeight: .infinity, alignment: .top)
         }
         .frame(maxHeight: .infinity)
     }
 
+    private var treeHeader: some View {
+        HStack(spacing: 12) {
+            Picker("", selection: tabBinding) {
+                Text("Folders").tag(Tab.folders)
+                Text("Large Files").tag(Tab.largeFiles)
+                Text(scanner.trash.map { "Trash · \(bytes($0.size))" } ?? "Trash").tag(Tab.trash)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 330)
+
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                TextField("Filter by name", text: $query)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12.5))
+                if !query.isEmpty {
+                    Button { query = "" } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.textMuted)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 8).padding(.vertical, 5)
+            .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 7))
+            .frame(width: 200)
+
+            Spacer(minLength: 0)
+            Toggle("Color by share", isOn: $colorByShare)
+                .toggleStyle(.checkbox)
+                .help("Mark items yellow (≥10%), orange (≥25%) or red (≥50%) by how much of their parent folder they take.")
+            Toggle("Chart", isOn: $showChart)
+                .toggleStyle(.checkbox)
+                .help("Show a ring chart of the selected folder next to the list.")
+        }
+        .font(.system(size: 12))
+        .padding(.horizontal, 16).padding(.vertical, 10)
+    }
+
+    private var largeFilesBar: some View {
+        HStack(spacing: 12) {
+            Picker("Kind", selection: $fileKind) {
+                ForEach(FileKind.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .frame(width: 230)
+            Toggle("Not opened in 6 months", isOn: $staleOnly)
+                .toggleStyle(.checkbox)
+            Spacer()
+            Text("\(filteredLargeFiles.count) of the \(scanner.largeFiles.count) biggest files")
+                .foregroundStyle(Theme.textMuted)
+        }
+        .font(.system(size: 12))
+        .padding(.horizontal, 16).padding(.vertical, 8)
+    }
+
     private var columnHeader: some View {
         HStack(spacing: 10) {
-            Text(tab == .trash ? "IN THE TRASH" : (scanner.root?.name.uppercased() ?? "NAME"))
+            Text(headerTitle)
             Spacer()
-            Text("SHARE").frame(width: 170, alignment: .leading)
+            if colorByShare {
+                HStack(spacing: 8) {
+                    legendDot(Theme.yellow, "10%")
+                    legendDot(Theme.orange, "25%")
+                    legendDot(Theme.red, "50%")
+                }
+            }
+            Text("OF PARENT").frame(width: 170, alignment: .leading)
             Text("SIZE").frame(width: 80, alignment: .trailing)
         }
         .font(.system(size: 10.5, weight: .semibold))
@@ -193,32 +373,60 @@ struct FolderTreeSection: View {
         .padding(.horizontal, 16).padding(.vertical, 7)
     }
 
+    private func legendDot(_ color: Color, _ label: String) -> some View {
+        HStack(spacing: 3) {
+            Circle().fill(color).frame(width: 7, height: 7)
+            Text("≥" + label)
+        }
+    }
+
+    private var headerTitle: String {
+        if !query.isEmpty { return "MATCHING “\(query.uppercased())”" }
+        switch tab {
+        case .folders: return currentRoot?.name.uppercased() ?? "NAME"
+        case .largeFiles: return "BIGGEST FILES"
+        case .trash: return "IN THE TRASH"
+        }
+    }
+
     @ViewBuilder private var treeBody: some View {
-        let node = tab == .folders ? scanner.root : scanner.trash
         if tab == .trash && !scanner.trashReadable {
             placeholder(icon: "lock.fill",
                         text: "macOS keeps the Trash private. Add MacCharge under Full Disk Access, then rescan.",
                         button: ("Open Full Disk Access…", openFullDiskAccess))
-        } else if let node {
-            if node.children.isEmpty && node.otherCount == 0 {
-                placeholder(icon: tab == .trash ? "trash" : "folder",
-                            text: tab == .trash ? "The Trash is empty." : "Nothing here.")
+        } else if tab == .largeFiles && scanner.root == nil {
+            placeholder(icon: scanner.isScanning ? "hourglass" : "doc.badge.ellipsis",
+                        text: scanner.isScanning ? "The biggest files are listed when the scan finishes."
+                                                 : "Scan to list the biggest files.")
+        } else if currentRoot != nil || tab == .largeFiles {
+            let lines = visibleLines
+            if lines.isEmpty {
+                placeholder(icon: query.isEmpty ? (tab == .trash ? "trash" : "folder") : "magnifyingglass",
+                            text: emptyText)
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(lines(of: node)) { line in
-                            FolderRow(line: line,
-                                      isExpanded: line.node.map { expanded.contains($0.id) } ?? false,
-                                      isSelected: line.node.map { $0.id == selected } ?? false,
-                                      toggle: {
-                                          selected = line.node?.id
-                                          toggle(line.node)
-                                      },
-                                      openMenu: { showMenu(for: line.node) })
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(lines) { line in
+                                FolderRow(line: line,
+                                          isExpanded: line.node.map { expanded.contains($0.id) } ?? false,
+                                          isSelected: line.node.map { selection.contains($0.id) } ?? false,
+                                          shareColor: colorByShare ? shareColor(line.share) : nil,
+                                          subtitle: subtitle(for: line),
+                                          toggle: { toggle(line.node) },
+                                          click: { click(line) },
+                                          openMenu: { showMenu(for: line) })
+                                    .id(line.id)
+                            }
                         }
+                        .padding(.vertical, 4)
+                        .id(scanner.revision)
                     }
-                    .padding(.vertical, 4)
-                    .id(scanner.revision)
+                    .onChange(of: scrollTarget) { target in
+                        guard let target else { return }
+                        proxy.scrollTo(target)
+                        scrollTarget = nil
+                    }
                 }
             }
         } else if scanner.isScanning {
@@ -226,6 +434,15 @@ struct FolderTreeSection: View {
         } else {
             placeholder(icon: "folder.badge.questionmark",
                         text: tab == .trash ? "Scan to measure the Trash." : "Press Scan to measure every folder on this Mac.")
+        }
+    }
+
+    private var emptyText: String {
+        if !query.isEmpty { return "Nothing named like “\(query)”. Only items of 1 MB or more are listed." }
+        switch tab {
+        case .folders: return "Nothing here."
+        case .largeFiles: return "No file matches these filters."
+        case .trash: return "The Trash is empty."
         }
     }
 
@@ -241,10 +458,27 @@ struct FolderTreeSection: View {
         .padding(30)
     }
 
-    // MARK: Tree
+    // MARK: Rows
 
-    /// The visible rows: every child of an expanded folder, depth-first.
-    private func lines(of root: FolderNode) -> [TreeLine] {
+    /// The tree on screen: the live preview while a scan runs.
+    private var currentRoot: FolderNode? {
+        switch tab {
+        case .trash: return scanner.trash
+        case .folders, .largeFiles: return scanner.isScanning ? scanner.livePreview : scanner.root
+        }
+    }
+
+    /// Whether rows are a flat list (search hits, large files) rather than the tree.
+    private var isFlat: Bool { tab == .largeFiles || !query.isEmpty }
+
+    private var visibleLines: [TreeLine] {
+        if tab == .largeFiles {
+            return filteredLargeFiles.map { TreeLine(node: $0, owner: $0.parent ?? $0, depth: 0) }
+        }
+        guard let root = currentRoot else { return [] }
+        if !query.isEmpty {
+            return search(root).map { TreeLine(node: $0, owner: $0.parent ?? root, depth: 0) }
+        }
         var out: [TreeLine] = []
         func walk(_ n: FolderNode, depth: Int) {
             for c in n.children {
@@ -259,37 +493,268 @@ struct FolderTreeSection: View {
         return out
     }
 
+    /// Every listed item whose name contains the query, biggest first.
+    private func search(_ root: FolderNode) -> [FolderNode] {
+        let q = query.lowercased()
+        var hits: [FolderNode] = []
+        func walk(_ n: FolderNode) {
+            for c in n.children {
+                if c.name.lowercased().contains(q) { hits.append(c) }
+                walk(c)
+            }
+        }
+        walk(root)
+        return Array(hits.sorted { $0.size > $1.size }.prefix(500))
+    }
+
+    private var filteredLargeFiles: [FolderNode] {
+        let cutoff = Date().addingTimeInterval(-182 * 86_400)
+        let q = query.lowercased()
+        return scanner.largeFiles.filter { f in
+            (fileKind == .all || FileKind.of(f.url) == fileKind)
+                && (!staleOnly || (f.accessDate ?? .distantPast) < cutoff)
+                && (q.isEmpty || f.name.lowercased().contains(q))
+        }
+    }
+
+    private func subtitle(for line: TreeLine) -> String? {
+        guard isFlat, let node = line.node else { return nil }
+        var s = abbreviate(node.url.deletingLastPathComponent().path)
+        if tab == .largeFiles, let d = node.accessDate {
+            s += " · opened " + Self.relative.localizedString(for: d, relativeTo: Date())
+        }
+        return s
+    }
+
+    private static let relative: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .short
+        return f
+    }()
+
+    private func shareColor(_ share: Double) -> Color? {
+        switch share {
+        case 0.5...: return Theme.red
+        case 0.25...: return Theme.orange
+        case 0.10...: return Theme.yellow
+        default: return nil
+        }
+    }
+
+    // MARK: Selection
+
+    private var selectedNodes: [FolderNode] {
+        visibleLines.compactMap(\.node).filter { selection.contains($0.id) }
+    }
+
+    /// Plain click selects the row and opens or closes it; ⌘-click adds or
+    /// removes it from the selection; ⇧-click selects a range.
+    private func click(_ line: TreeLine) {
+        guard let node = line.node else { return }
+        let flags = NSEvent.modifierFlags
+        if flags.contains(.command) {
+            if selection.contains(node.id) { selection.remove(node.id) } else { selection.insert(node.id) }
+            anchor = node.id
+        } else if flags.contains(.shift), let anchor {
+            selection = Set(range(from: anchor, to: node.id))
+        } else {
+            selection = [node.id]
+            anchor = node.id
+            if !isFlat { toggle(node) }
+        }
+        cursor = node.id
+        QuickLook.shared.update(selectedNodes.map(\.url))
+    }
+
+    private func range(from a: String, to b: String) -> [String] {
+        let ids = visibleLines.compactMap { $0.node?.id }
+        guard let i = ids.firstIndex(of: a), let j = ids.firstIndex(of: b) else { return [b] }
+        return Array(ids[min(i, j)...max(i, j)])
+    }
+
     private func toggle(_ node: FolderNode?) {
         guard let node, !node.children.isEmpty else { return }
         if expanded.contains(node.id) { expanded.remove(node.id) } else { expanded.insert(node.id) }
     }
 
-    /// Right-clicking an item pops a native menu at the pointer with what can be done to it.
-    private func showMenu(for node: FolderNode?) {
-        guard let node else { return }
-        selected = node.id
+    /// Selects `node` in the tree: clears the filter, opens its ancestors and
+    /// scrolls to it.
+    private func reveal(_ node: FolderNode) {
+        if tab == .largeFiles { tab = .folders }
+        query = ""
+        var p = node.parent
+        while let a = p {
+            expanded.insert(a.id)
+            p = a.parent
+        }
+        selection = [node.id]
+        anchor = node.id
+        cursor = node.id
+        scrollTarget = node.id
+    }
+
+    // MARK: Chart
+
+    /// The selected folder (or the scanned root when nothing fitting is selected).
+    private func chartFocus(in root: FolderNode) -> FolderNode {
+        if selection.count == 1, let id = selection.first, let n = root.find(id) {
+            if !n.children.isEmpty { return n }
+            if let p = n.parent { return p }
+        }
+        return root
+    }
+
+    private func goUp(in root: FolderNode) {
+        let focus = chartFocus(in: root)
+        if let p = focus.parent, p !== root { reveal(p) } else { selection = [] }
+    }
+
+    // MARK: Menu
+
+    /// Right-click pops a native menu with what can be done to the item, or to
+    /// the whole selection when the item is part of a multi-selection.
+    private func showMenu(for line: TreeLine) {
+        guard let node = line.node else { return }
+        if !selection.contains(node.id) || selection.count < 2 {
+            selection = [node.id]
+            anchor = node.id
+            cursor = node.id
+        }
+        let targets = selection.count > 1 ? selectedNodes : [node]
         let inTrash = tab == .trash
         let menu = ActionMenu()
-        if !node.children.isEmpty {
-            let open = expanded.contains(node.id)
-            menu.add(open ? "Collapse" : "Expand", symbol: open ? "chevron.down" : "chevron.right") { toggle(node) }
+
+        if targets.count > 1 {
+            menu.add("\(targets.count) items · \(bytes(targets.reduce(0) { $0 + $1.size }))",
+                     symbol: "checklist", enabled: false) {}
             menu.separator()
+            menu.add("Reveal in Finder", symbol: "magnifyingglass") { scanner.reveal(targets) }
+            menu.add("Quick Look", symbol: "eye") { QuickLook.shared.show(targets.map(\.url)) }
+            menu.add("Copy Paths", symbol: "doc.on.doc") { scanner.copyPaths(targets) }
+        } else {
+            if !isFlat && !node.children.isEmpty {
+                let open = expanded.contains(node.id)
+                menu.add(open ? "Collapse" : "Expand", symbol: open ? "chevron.down" : "chevron.right") { toggle(node) }
+                menu.separator()
+            } else if isFlat && !inTrash && scanner.root != nil {
+                menu.add("Show in Folder Tree", symbol: "list.bullet.indent") { reveal(node) }
+                menu.separator()
+            }
+            menu.add("Reveal in Finder", symbol: "magnifyingglass") { scanner.reveal([node]) }
+            menu.add("Get Info", symbol: "info.circle") { scanner.showInfo(node) }
+            menu.add("Quick Look", symbol: "eye") { QuickLook.shared.show([node.url]) }
+            menu.add("Copy Path", symbol: "doc.on.doc") { scanner.copyPaths([node]) }
+            menu.add("Open in Terminal", symbol: "terminal") { scanner.openInTerminal(node) }
         }
-        menu.add("Reveal in Finder", symbol: "magnifyingglass") { scanner.reveal(node) }
-        menu.add("Get Info", symbol: "info.circle") { scanner.showInfo(node) }
-        menu.add("Copy Path", symbol: "doc.on.doc") { scanner.copyPath(node) }
         menu.separator()
         if inTrash {
-            menu.add("Delete Immediately…", symbol: "xmark.bin") { pendingDelete = node }
-        } else if scanner.canTrash(node) {
-            menu.add("Move to Trash…", symbol: "trash") { pendingTrash = node }
+            menu.add(targets.count > 1 ? "Delete \(targets.count) Items Immediately…" : "Delete Immediately…",
+                     symbol: "xmark.bin") { pendingDelete = targets }
+        } else if targets.allSatisfy({ scanner.canTrash($0) }) {
+            menu.add(targets.count > 1 ? "Move \(targets.count) Items to Trash…" : "Move to Trash…",
+                     symbol: "trash") { pendingTrash = targets }
         } else {
-            menu.add("Move to Trash — needs admin rights", symbol: "lock", enabled: false) {}
+            menu.add(scanner.isScanning ? "Move to Trash — wait for the scan to finish"
+                                        : "Move to Trash — needs admin rights",
+                     symbol: "lock", enabled: false) {}
         }
         menu.popUp()
     }
 
+    // MARK: Keyboard
+
+    /// Arrow keys, Space, ⌘⌫, ⌘A, ⌘C and Esc work on the list while this tab is
+    /// on screen, except when the filter field has the keyboard.
+    private func installKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            handleKey(event) ? nil : event
+        }
+    }
+
+    private func removeKeyMonitor() {
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        keyMonitor = nil
+    }
+
+    private func handleKey(_ event: NSEvent) -> Bool {
+        guard let window = NSApp.keyWindow, window.attachedSheet == nil, NSApp.modalWindow == nil,
+              !(window.firstResponder is NSTextView) else { return false }
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let cmd = flags.contains(.command)
+        let shift = flags.contains(.shift)
+        let lines = visibleLines.compactMap(\.node)
+        guard !lines.isEmpty else { return false }
+
+        switch event.keyCode {
+        case 125: move(1, extend: shift, in: lines); return true          // ↓
+        case 126: move(-1, extend: shift, in: lines); return true         // ↑
+        case 124:                                                          // →
+            guard !isFlat, let n = cursorNode(in: lines) else { return true }
+            if !n.children.isEmpty && !expanded.contains(n.id) { expanded.insert(n.id) } else { move(1, extend: false, in: lines) }
+            return true
+        case 123:                                                          // ←
+            guard !isFlat, let n = cursorNode(in: lines) else { return true }
+            if expanded.contains(n.id) { expanded.remove(n.id) } else if let p = n.parent, lines.contains(where: { $0 === p }) { select(p) }
+            return true
+        case 49 where !cmd:                                                // Space
+            QuickLook.shared.show(selectedNodes.map(\.url))
+            return true
+        case 51 where cmd:                                                 // ⌘⌫
+            let targets = selectedNodes
+            guard !targets.isEmpty else { return true }
+            if tab == .trash { pendingDelete = targets }
+            else if targets.allSatisfy({ scanner.canTrash($0) }) { pendingTrash = targets }
+            else { NSSound.beep() }
+            return true
+        case 53:                                                           // Esc
+            if !query.isEmpty { query = "" } else { selection = [] }
+            return true
+        default:
+            guard cmd, let key = event.charactersIgnoringModifiers?.lowercased() else { return false }
+            if key == "a" { selection = Set(lines.map(\.id)); return true }
+            if key == "c", !selection.isEmpty { scanner.copyPaths(selectedNodes); return true }
+            return false
+        }
+    }
+
+    private func cursorNode(in lines: [FolderNode]) -> FolderNode? {
+        lines.first { $0.id == cursor } ?? lines.first { selection.contains($0.id) }
+    }
+
+    private func move(_ delta: Int, extend: Bool, in lines: [FolderNode]) {
+        let ids = lines.map(\.id)
+        let current = cursor.flatMap { ids.firstIndex(of: $0) }
+        let next = current.map { min(max($0 + delta, 0), ids.count - 1) } ?? (delta > 0 ? 0 : ids.count - 1)
+        let id = ids[next]
+        if extend, let anchor {
+            selection = Set(range(from: anchor, to: id))
+        } else {
+            selection = [id]
+            anchor = id
+        }
+        cursor = id
+        scrollTarget = id
+        QuickLook.shared.update(selectedNodes.map(\.url))
+    }
+
+    private func select(_ node: FolderNode) {
+        selection = [node.id]
+        anchor = node.id
+        cursor = node.id
+        scrollTarget = node.id
+    }
+
     // MARK: Helpers
+
+    private var tabBinding: Binding<Tab> {
+        Binding(get: { tab }, set: { new in
+            tab = new
+            selection = []
+            cursor = nil
+            anchor = nil
+        })
+    }
 
     private var scopeBinding: Binding<ScopeChoice> {
         Binding(
@@ -328,9 +793,10 @@ struct FolderTreeSection: View {
 
     private func startScan(_ scope: FolderScanner.Scope) {
         scanner.scope = scope
-        expanded = []
-        selected = nil
-        tab = .folders
+        selection = []
+        cursor = nil
+        anchor = nil
+        if tab == .trash { tab = .folders }
         scanner.scan()
     }
 
@@ -343,8 +809,18 @@ struct FolderTreeSection: View {
         return nil
     }
 
-    private func present(_ item: Binding<FolderNode?>) -> Binding<Bool> {
-        Binding(get: { item.wrappedValue != nil }, set: { if !$0 { item.wrappedValue = nil } })
+    private var trashTitle: String {
+        pendingTrash.count > 1 ? "Move \(pendingTrash.count) items to the Trash?" : "Move to Trash?"
+    }
+
+    private func describe(_ nodes: [FolderNode]) -> String {
+        let total = bytes(nodes.reduce(0) { $0 + $1.size })
+        if nodes.count == 1, let n = nodes.first { return "“\(n.name)” (\(total))" }
+        return "\(nodes.count) items (\(total))"
+    }
+
+    private func present(_ items: Binding<[FolderNode]>) -> Binding<Bool> {
+        Binding(get: { !items.wrappedValue.isEmpty }, set: { if !$0 { items.wrappedValue = [] } })
     }
 
     private func openFullDiskAccess() {
@@ -358,31 +834,62 @@ private func bytes(_ n: Int64) -> String {
     ByteCountFormatter.string(fromByteCount: n, countStyle: .file)
 }
 
+private func abbreviate(_ path: String) -> String {
+    let home = FileManager.default.homeDirectoryForCurrentUser.path
+    return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
+}
+
+/// Groups for the Large Files filter, by file extension.
+private enum FileKind: String, CaseIterable {
+    case all = "All kinds"
+    case video = "Video"
+    case archive = "Disk images & archives"
+    case audio = "Audio"
+    case image = "Images"
+    case document = "Documents"
+    case other = "Other"
+
+    private static let extensions: [FileKind: Set<String>] = [
+        .video: ["mp4", "mov", "m4v", "mkv", "avi", "webm", "wmv", "flv", "mpg", "mpeg", "3gp"],
+        .archive: ["dmg", "iso", "img", "zip", "rar", "7z", "tar", "gz", "tgz", "bz2", "xz", "pkg", "xip", "ipsw", "vmdk", "qcow2", "sparseimage", "sparsebundle"],
+        .audio: ["mp3", "m4a", "wav", "aiff", "aif", "flac", "aac", "ogg", "caf"],
+        .image: ["jpg", "jpeg", "png", "heic", "tiff", "tif", "gif", "raw", "cr2", "nef", "arw", "dng", "psd", "webp"],
+        .document: ["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "key", "pages", "numbers", "txt", "csv", "epub"],
+    ]
+
+    static func of(_ url: URL) -> FileKind {
+        let ext = url.pathExtension.lowercased()
+        for (kind, set) in extensions where set.contains(ext) { return kind }
+        return .other
+    }
+}
+
 /// One visible row: an item, or (node == nil) the "smaller items" line of `owner`.
 private struct TreeLine: Identifiable {
     let node: FolderNode?
     let owner: FolderNode
     let depth: Int
 
-    var id: String {
-        if let node { return "n\(node.id.hashValue)" }
-        return "o\(owner.id.hashValue)"
-    }
+    var id: String { node?.id ?? "smaller:" + owner.id }
     var size: Int64 { node?.size ?? owner.otherSize }
+    var share: Double {
+        guard node !== owner else { return 1 }
+        return Double(size) / Double(max(1, owner.size))
+    }
 }
 
 private struct FolderRow: View {
     let line: TreeLine
     let isExpanded: Bool
     let isSelected: Bool
+    /// Set when "Color by share" is on and the item is big for its folder.
+    let shareColor: Color?
+    let subtitle: String?
     let toggle: () -> Void
+    let click: () -> Void
     let openMenu: () -> Void
 
     @State private var isHovering = false
-
-    private var share: Double {
-        Double(line.size) / Double(max(1, line.owner.size))
-    }
 
     private var tint: Color {
         switch line.node?.kind {
@@ -402,11 +909,13 @@ private struct FolderRow: View {
         }
     }
 
+    private var pending: Bool { line.node?.pending == true }
+
     var body: some View {
         HStack(spacing: 8) {
             Color.clear.frame(width: CGFloat(line.depth) * 18, height: 1)
             Group {
-                if let node = line.node, !node.children.isEmpty {
+                if subtitle == nil, let node = line.node, !node.children.isEmpty {
                     Button(action: toggle) {
                         Image(systemName: "chevron.right")
                             .font(.system(size: 10, weight: .bold))
@@ -424,23 +933,34 @@ private struct FolderRow: View {
                 .font(.system(size: 12))
                 .foregroundStyle(tint)
                 .frame(width: 16)
+            if let shareColor {
+                Circle().fill(shareColor).frame(width: 7, height: 7)
+            }
             Text(line.node?.name ?? "\(line.owner.otherCount.formatted()) smaller item\(line.owner.otherCount == 1 ? "" : "s")")
                 .font(.system(size: 12.5, weight: line.node == nil ? .regular : .medium))
                 .foregroundStyle(line.node == nil ? Theme.textMuted : Theme.textPrimary)
                 .lineLimit(1).truncationMode(.middle)
+                .layoutPriority(1)
+            if let subtitle {
+                Text(subtitle)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textMuted)
+                    .lineLimit(1).truncationMode(.head)
+            }
             Spacer(minLength: 10)
             HStack(spacing: 8) {
-                BatteryBar(fraction: share, color: tint.opacity(line.node == nil ? 0.5 : 1))
+                BatteryBar(fraction: pending ? 0 : line.share,
+                           color: (shareColor ?? tint).opacity(line.node == nil ? 0.5 : 1))
                     .frame(width: 120)
-                Text(share < 0.001 ? "<0.1%" : String(format: "%.1f%%", share * 100))
+                Text(pending ? "" : (line.share < 0.001 ? "<0.1%" : String(format: "%.1f%%", line.share * 100)))
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Theme.textMuted)
+                    .foregroundStyle(shareColor ?? Theme.textMuted)
                     .frame(width: 42, alignment: .trailing)
             }
             .frame(width: 170, alignment: .leading)
-            Text(ByteCountFormatter.string(fromByteCount: line.size, countStyle: .file))
-                .font(.system(size: 12.5, weight: .semibold, design: .rounded))
-                .foregroundStyle(line.node == nil ? Theme.textMuted : Theme.textPrimary)
+            Text(pending ? "measuring…" : ByteCountFormatter.string(fromByteCount: line.size, countStyle: .file))
+                .font(.system(size: pending ? 11 : 12.5, weight: pending ? .regular : .semibold, design: .rounded))
+                .foregroundStyle(pending || line.node == nil ? Theme.textMuted : Theme.textPrimary)
                 .frame(width: 80, alignment: .trailing)
         }
         .padding(.horizontal, 16)
@@ -452,11 +972,158 @@ private struct FolderRow: View {
                 .padding(.horizontal, 6)
         )
         .contentShape(Rectangle())
-        // Left click opens or closes the folder; right click (or ⌃-click) shows the actions.
-        .onTapGesture(perform: toggle)
+        // Left click selects and opens or closes the folder; right click (or ⌃-click) shows the actions.
+        .onTapGesture(perform: click)
         .overlay(RightClickCatcher(action: openMenu))
         .onHover { isHovering = $0 }
         .help(line.node?.url.path ?? "Items under 1 MB, added into the folder's total")
+    }
+}
+
+/// Ring chart of a folder: each ring is one level deeper, each slice as wide
+/// as its share of the parent. Clicking a slice selects it in the list;
+/// clicking the middle goes up a level.
+private struct SunburstChart: View {
+    let focus: FolderNode
+    let onPick: (FolderNode) -> Void
+    let onUp: () -> Void
+
+    private let rings = 3
+    private static let palette: [Color] = [
+        Theme.blue, Theme.green, Theme.purple, Theme.orange, Theme.yellow, Color(hex: 0x4FD1C5), Theme.red,
+    ]
+
+    @State private var hovered: FolderNode?
+
+    private struct Slice {
+        let node: FolderNode
+        let start: Double
+        let end: Double
+        let ring: Int
+        let color: Color
+    }
+
+    private var slices: [Slice] {
+        var out: [Slice] = []
+        func add(_ n: FolderNode, from start: Double, to end: Double, ring: Int, color: Color?) {
+            guard ring < rings, n.size > 0 else { return }
+            var a = start
+            for (i, c) in n.children.enumerated() where !c.pending {
+                let span = (end - start) * Double(c.size) / Double(n.size)
+                defer { a += span }
+                // Slivers under ~0.3° are not worth drawing or aiming at.
+                guard span > 0.005 else { continue }
+                let col = color ?? Self.palette[i % Self.palette.count]
+                out.append(Slice(node: c, start: a, end: a + span, ring: ring, color: col))
+                add(c, from: a, to: a + span, ring: ring + 1, color: col)
+            }
+        }
+        add(focus, from: 0, to: 2 * .pi, ring: 0, color: nil)
+        return out
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            let side = min(geo.size.width, geo.size.height)
+            let center = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
+            let inner = side * 0.2
+            let ringWidth = (side / 2 - inner - 2) / CGFloat(rings)
+            let all = slices
+
+            ZStack {
+                Canvas { ctx, _ in
+                    for s in all {
+                        let r0 = inner + CGFloat(s.ring) * ringWidth
+                        var path = Path()
+                        path.addArc(center: center, radius: r0 + ringWidth - 1,
+                                    startAngle: .radians(s.start - .pi / 2), endAngle: .radians(s.end - .pi / 2),
+                                    clockwise: false)
+                        path.addArc(center: center, radius: r0,
+                                    startAngle: .radians(s.end - .pi / 2), endAngle: .radians(s.start - .pi / 2),
+                                    clockwise: true)
+                        path.closeSubpath()
+                        let lit = hovered === s.node
+                        ctx.fill(path, with: .color(s.color.opacity(lit ? 1 : 0.9 - Double(s.ring) * 0.22)))
+                        ctx.stroke(path, with: .color(Theme.card), lineWidth: 1)
+                    }
+                }
+                VStack(spacing: 2) {
+                    Text((hovered ?? focus).name)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(2).multilineTextAlignment(.center)
+                    Text(bytes((hovered ?? focus).size))
+                        .font(.system(size: 11, design: .rounded))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                .frame(width: inner * 1.7)
+                .position(center)
+                .allowsHitTesting(false)
+            }
+            .contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 0).onEnded { v in
+                switch hit(v.location, center: center, inner: inner, ringWidth: ringWidth, in: all) {
+                case .some(let n): onPick(n)
+                case .none where distance(v.location, center) < inner: onUp()
+                default: break
+                }
+            })
+            .onContinuousHover { phase in
+                if case .active(let p) = phase {
+                    hovered = hit(p, center: center, inner: inner, ringWidth: ringWidth, in: all)
+                } else {
+                    hovered = nil
+                }
+            }
+        }
+        .help("Click a slice to select it, the middle to go up a level.")
+    }
+
+    private func distance(_ p: CGPoint, _ c: CGPoint) -> CGFloat {
+        hypot(p.x - c.x, p.y - c.y)
+    }
+
+    private func hit(_ p: CGPoint, center: CGPoint, inner: CGFloat, ringWidth: CGFloat,
+                     in all: [Slice]) -> FolderNode? {
+        let r = distance(p, center)
+        guard r >= inner else { return nil }
+        let ring = Int((r - inner) / ringWidth)
+        var angle = Double(atan2(p.y - center.y, p.x - center.x)) + .pi / 2
+        if angle < 0 { angle += 2 * .pi }
+        return all.first { $0.ring == ring && angle >= $0.start && angle < $0.end }?.node
+    }
+}
+
+/// Quick Look panel fed directly with file URLs.
+private final class QuickLook: NSObject, QLPreviewPanelDataSource {
+    static let shared = QuickLook()
+    private var urls: [URL] = []
+
+    /// Opens the panel on `urls`, or closes it when it already shows them.
+    func show(_ urls: [URL]) {
+        guard !urls.isEmpty, let panel = QLPreviewPanel.shared() else { return }
+        if panel.isVisible && urls == self.urls {
+            panel.orderOut(nil)
+            return
+        }
+        self.urls = urls
+        panel.dataSource = self
+        panel.reloadData()
+        panel.makeKeyAndOrderFront(nil)
+    }
+
+    /// Follows the selection while the panel is open.
+    func update(_ urls: [URL]) {
+        guard QLPreviewPanel.sharedPreviewPanelExists(), let panel = QLPreviewPanel.shared(),
+              panel.isVisible, !urls.isEmpty, urls != self.urls else { return }
+        self.urls = urls
+        panel.reloadData()
+    }
+
+    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int { urls.count }
+
+    func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> QLPreviewItem! {
+        urls[index] as NSURL
     }
 }
 

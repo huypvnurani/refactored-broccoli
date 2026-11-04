@@ -23,7 +23,7 @@
 - **Công suất** — công suất tiêu thụ thực của hệ thống (đọc từ SMC), công suất vào/ra pin, kèm biểu đồ theo thời gian thực.
 - **Hệ thống** — nhiệt độ CPU/GPU, tốc độ quạt, và các app ngốn CPU, RAM, năng lượng nhiều nhất.
 - **Làm mát** — chuyển quạt giữa Tự động và Thủ công, kéo thanh trượt để chỉnh tốc độ, có ngưỡng nhiệt an toàn.
-- **FolderTree** — quét toàn bộ máy, thư mục Home hoặc bất kỳ folder nào bạn chọn (hay kéo thả vào) để xem folder nào chiếm nhiều dung lượng nhất; bấm vào một mục để Reveal in Finder, Get Info, Copy Path hoặc chuyển vào Thùng rác. Thùng rác có tab riêng kèm nút Empty Trash.
+- **FolderTree** — quét toàn bộ máy, thư mục Home hoặc bất kỳ folder nào bạn chọn (hay kéo thả vào), dung lượng hiện dần ngay trong lúc quét. Click trái để mở folder, click phải để Reveal in Finder, Get Info, Quick Look, Copy Path, Open in Terminal hoặc chuyển vào Thùng rác. Lọc theo tên, chọn nhiều mục (⌘/⇧-click, phím mũi tên, ⌘A), xem danh sách file lớn nhất theo loại hoặc theo lần mở gần nhất, tô màu theo tỉ lệ so với folder cha, bật biểu đồ vòng, và xem phần dung lượng còn lại nằm ở đâu (VM, Preboot, Recovery…). Thùng rác có tab riêng kèm nút Empty Trash.
 - **Chạy nền gọn nhẹ** — đóng cửa sổ thì chỉ còn số watt trên thanh menu; bật khởi động cùng máy chỉ bằng một nút.
 - Universal binary (Apple Silicon + Intel), SwiftUI thuần, không phụ thuộc thư viện ngoài.
 
