@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import Quartz
+import QuickLookThumbnailing
 
 /// Disk usage by folder: one scan measures every folder, the tree lists the
 /// biggest first, and right-clicking an item offers Finder actions. Large files
@@ -929,10 +930,14 @@ private struct FolderRow: View {
                     Color.clear.frame(width: 16, height: 20)
                 }
             }
-            Image(systemName: icon)
-                .font(.system(size: 12))
-                .foregroundStyle(tint)
-                .frame(width: 16)
+            if let node = line.node, node.kind != .folder {
+                ItemIcon(node: node, fallback: icon, tint: tint)
+            } else {
+                Image(systemName: icon)
+                    .font(.system(size: 12))
+                    .foregroundStyle(tint)
+                    .frame(width: 20, height: 20)
+            }
             if let shareColor {
                 Circle().fill(shareColor).frame(width: 7, height: 7)
             }
@@ -978,6 +983,89 @@ private struct FolderRow: View {
         .onHover { isHovering = $0 }
         .help(line.node?.url.path ?? "Items under 1 MB, added into the folder's total")
     }
+}
+
+/// A file's Finder thumbnail (or an app/bundle's own icon), loaded when the row
+/// scrolls into view. The SF Symbol shows until it arrives.
+private struct ItemIcon: View {
+    let node: FolderNode
+    let fallback: String
+    let tint: Color
+
+    static let side: CGFloat = 20
+
+    @State private var image: NSImage?
+    @State private var request: QLThumbnailGenerator.Request?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+            } else {
+                Image(systemName: fallback)
+                    .font(.system(size: 12))
+                    .foregroundStyle(tint)
+            }
+        }
+        .frame(width: Self.side, height: Self.side)
+        .onAppear(perform: load)
+        .onDisappear {
+            if let request { QLThumbnailGenerator.shared.cancel(request) }
+            request = nil
+        }
+    }
+
+    private func load() {
+        let url = node.url
+        if let hit = ThumbnailCache.image(for: url) {
+            image = hit
+            return
+        }
+        // Apps and bundles are better known by their icon than by a preview,
+        // and the icon is cheap.
+        if node.kind == .package {
+            let icon = NSWorkspace.shared.icon(forFile: url.path)
+            ThumbnailCache.store(icon, for: url)
+            image = icon
+            return
+        }
+        let req = QLThumbnailGenerator.Request(
+            fileAt: url, size: CGSize(width: Self.side, height: Self.side),
+            scale: NSScreen.main?.backingScaleFactor ?? 2,
+            representationTypes: [.icon, .thumbnail])
+        request = req
+        // Called once with the file-type icon, then again with the real
+        // thumbnail when the file has one.
+        QLThumbnailGenerator.shared.generateRepresentations(for: req) { rep, type, _ in
+            guard let rep else { return }
+            let img = rep.nsImage
+            // A preview of a tiny image comes back a few points wide; blown up
+            // it is a smudge, so the file-type icon stays instead.
+            if type == .thumbnail && max(img.size.width, img.size.height) < Self.side * 0.6 { return }
+            DispatchQueue.main.async {
+                if type == .thumbnail || ThumbnailCache.image(for: url) == nil {
+                    ThumbnailCache.store(img, for: url)
+                }
+                image = img
+            }
+        }
+    }
+}
+
+/// Thumbnails already made this session, keyed by path. NSCache drops the
+/// oldest under memory pressure on its own.
+private enum ThumbnailCache {
+    private static let cache: NSCache<NSString, NSImage> = {
+        let c = NSCache<NSString, NSImage>()
+        c.countLimit = 600
+        return c
+    }()
+
+    static func image(for url: URL) -> NSImage? { cache.object(forKey: url.path as NSString) }
+    static func store(_ image: NSImage, for url: URL) { cache.setObject(image, forKey: url.path as NSString) }
 }
 
 /// Ring chart of a folder: each ring is one level deeper, each slice as wide
