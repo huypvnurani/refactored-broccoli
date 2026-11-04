@@ -210,7 +210,10 @@ struct FolderTreeSection: View {
                             FolderRow(line: line,
                                       isExpanded: line.node.map { expanded.contains($0.id) } ?? false,
                                       isSelected: line.node.map { $0.id == selected } ?? false,
-                                      toggle: { toggle(line.node) },
+                                      toggle: {
+                                          selected = line.node?.id
+                                          toggle(line.node)
+                                      },
                                       openMenu: { showMenu(for: line.node) })
                         }
                     }
@@ -261,7 +264,7 @@ struct FolderTreeSection: View {
         if expanded.contains(node.id) { expanded.remove(node.id) } else { expanded.insert(node.id) }
     }
 
-    /// Clicking an item pops a native menu at the pointer with what can be done to it.
+    /// Right-clicking an item pops a native menu at the pointer with what can be done to it.
     private func showMenu(for node: FolderNode?) {
         guard let node else { return }
         selected = node.id
@@ -449,9 +452,35 @@ private struct FolderRow: View {
                 .padding(.horizontal, 6)
         )
         .contentShape(Rectangle())
-        .onTapGesture(perform: openMenu)
+        // Left click opens or closes the folder; right click (or ⌃-click) shows the actions.
+        .onTapGesture(perform: toggle)
+        .overlay(RightClickCatcher(action: openMenu))
         .onHover { isHovering = $0 }
         .help(line.node?.url.path ?? "Items under 1 MB, added into the folder's total")
+    }
+}
+
+/// Transparent layer that takes only right clicks and ⌃-clicks; every other
+/// event falls through to the SwiftUI row underneath.
+private struct RightClickCatcher: NSViewRepresentable {
+    let action: () -> Void
+
+    func makeNSView(context: Context) -> CatcherView { CatcherView() }
+    func updateNSView(_ view: CatcherView, context: Context) { view.action = action }
+
+    final class CatcherView: NSView {
+        var action: (() -> Void)?
+
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            guard let e = NSApp.currentEvent else { return nil }
+            let isRight = e.type == .rightMouseDown
+                || (e.type == .leftMouseDown && e.modifierFlags.contains(.control))
+            return isRight ? super.hitTest(point) : nil
+        }
+
+        override func rightMouseDown(with event: NSEvent) { action?() }
+        // Only reached for ⌃-click, which hitTest lets through.
+        override func mouseDown(with event: NSEvent) { action?() }
     }
 }
 
