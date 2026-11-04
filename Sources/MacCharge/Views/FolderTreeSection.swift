@@ -123,53 +123,69 @@ struct FolderTreeSection: View {
         return t.children.isEmpty ? "Empty" : "\(t.children.count) item\(t.children.count == 1 ? "" : "s")"
     }
 
+    /// What to scan and the scan buttons (wrapping onto two lines when narrow),
+    /// then the scan status. Buttons keep their full width; only the status
+    /// text may shorten.
     private var controlCard: some View {
         Card(padding: 14) {
-            HStack(spacing: 14) {
-                Picker("", selection: scopeBinding) {
-                    Text("Whole Mac").tag(ScopeChoice.wholeMac)
-                    Text("Home").tag(ScopeChoice.home)
-                    Text(customName ?? "Folder…").tag(ScopeChoice.folder)
+            VStack(alignment: .leading, spacing: 10) {
+                SplitBar(spacing: 12) {
+                    Picker("", selection: scopeBinding) {
+                        Text("Whole Mac").tag(ScopeChoice.wholeMac)
+                        Text("Home").tag(ScopeChoice.home)
+                        Text(customName ?? "Folder…").tag(ScopeChoice.folder)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 300)
+                    .disabled(scanner.isScanning)
+                    Button {
+                        chooseFolder()
+                    } label: {
+                        Label("Choose Folder…", systemImage: "folder.badge.plus")
+                    }
+                    .fixedSize()
+                    .disabled(scanner.isScanning)
+                    .help("Pick any folder or drive to scan. You can also drop a folder onto this bar.")
+                } trailing: {
+                    Button("Full Disk Access…") { openFullDiskAccess() }
+                        .fixedSize()
+                        .help("A complete scan, the Trash included, needs MacCharge in System Settings → Privacy & Security → Full Disk Access.")
+                    if scanner.isScanning {
+                        Button("Stop") { scanner.cancel() }
+                            .fixedSize()
+                    } else {
+                        Button(scanner.root == nil ? "Scan" : "Rescan") { startScan(scanner.scope) }
+                            .keyboardShortcut(.return, modifiers: .command)
+                            .buttonStyle(.borderedProminent)
+                            .tint(Theme.green)
+                            .fixedSize()
+                    }
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 330)
-                .disabled(scanner.isScanning)
-                Button {
-                    chooseFolder()
-                } label: {
-                    Label("Choose Folder…", systemImage: "folder.badge.plus")
-                }
-                .disabled(scanner.isScanning)
-                .help("Pick any folder or drive to scan. You can also drop a folder onto this bar.")
 
-                if scanner.isScanning {
-                    ProgressView().controlSize(.small)
-                    VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 8) {
+                    if scanner.isScanning {
+                        ProgressView().controlSize(.small)
                         Text("Scanning · \(scanner.scannedItems.formatted()) items")
-                            .font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                            .font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                            .fixedSize()
                         Text(scanner.currentPath)
                             .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
                             .lineLimit(1).truncationMode(.middle)
+                    } else {
+                        Image(systemName: scanner.isRestored ? "clock.arrow.circlepath" : "clock")
+                            .font(.system(size: 11)).foregroundStyle(Theme.textMuted)
+                        Text(lastScanText)
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(scanner.isRestored ? Theme.textSecondary : Theme.textMuted)
+                            .lineLimit(1).truncationMode(.tail)
+                            .help(scanner.isRestored
+                                  ? "These results were saved after the last scan, so they open without scanning. Rescan for fresh numbers."
+                                  : "")
                     }
                     Spacer(minLength: 0)
-                    Button("Stop") { scanner.cancel() }
-                } else {
-                    Text(lastScanText)
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(scanner.isRestored ? Theme.textSecondary : Theme.textMuted)
-                        .lineLimit(1)
-                        .help(scanner.isRestored
-                              ? "These results were saved after the last scan, so they open without scanning. Rescan for fresh numbers."
-                              : "")
-                    Spacer(minLength: 0)
-                    Button("Full Disk Access…") { openFullDiskAccess() }
-                        .help("A complete scan, the Trash included, needs MacCharge in System Settings → Privacy & Security → Full Disk Access.")
-                    Button(scanner.root == nil ? "Scan" : "Rescan") { startScan(scanner.scope) }
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .buttonStyle(.borderedProminent)
-                    .tint(Theme.green)
                 }
+                .frame(height: 16)
             }
         }
         .overlay(
@@ -294,7 +310,7 @@ struct FolderTreeSection: View {
                         SunburstChart(focus: chartFocus(in: root),
                                       onPick: { reveal($0) },
                                       onUp: { goUp(in: root) })
-                            .frame(width: 300)
+                            .frame(width: 260)
                             .padding(14)
                     }
                 }
@@ -316,8 +332,10 @@ struct FolderTreeSection: View {
         .frame(maxHeight: .infinity)
     }
 
+    /// Tabs and the name filter on the left, sort and view options on the right;
+    /// on a narrow window the right half drops to its own line.
     private var treeHeader: some View {
-        HStack(spacing: 12) {
+        SplitBar(spacing: 12) {
             Picker("", selection: tabBinding) {
                 Text("Folders").tag(Tab.folders)
                 Text("Large Files").tag(Tab.largeFiles)
@@ -325,8 +343,7 @@ struct FolderTreeSection: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: 300)
-
+            .frame(width: 320)
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(Theme.textMuted)
                 TextField("Filter by name", text: $query)
@@ -341,16 +358,17 @@ struct FolderTreeSection: View {
             }
             .padding(.horizontal, 8).padding(.vertical, 5)
             .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 7))
-            .frame(width: 170)
-
+            .frame(width: 200)
+        } trailing: {
             sortControl
-
-            Spacer(minLength: 0)
+                .fixedSize()
             Toggle("Color by share", isOn: $colorByShare)
                 .toggleStyle(.checkbox)
+                .fixedSize()
                 .help("Mark items yellow (≥10%), orange (≥25%) or red (≥50%) by how much of their parent folder they take.")
             Toggle("Chart", isOn: $showChart)
                 .toggleStyle(.checkbox)
+                .fixedSize()
                 .help("Show a ring chart of the selected folder next to the list.")
         }
         .font(.system(size: 12))
@@ -376,12 +394,18 @@ struct FolderTreeSection: View {
     private var columnHeader: some View {
         HStack(spacing: 10) {
             Text(headerTitle)
-            Spacer()
+                .lineLimit(1).truncationMode(.tail)
+            Spacer(minLength: 8)
             if colorByShare {
-                HStack(spacing: 8) {
-                    legendDot(Theme.yellow, "10%")
-                    legendDot(Theme.orange, "25%")
-                    legendDot(Theme.red, "50%")
+                // Dropped when the list is too narrow for it (chart on, small window).
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) {
+                        legendDot(Theme.yellow, "10%")
+                        legendDot(Theme.orange, "25%")
+                        legendDot(Theme.red, "50%")
+                    }
+                    .fixedSize()
+                    Color.clear.frame(width: 0, height: 0)
                 }
             }
             Text("OF PARENT").frame(width: 170, alignment: .leading)
@@ -899,6 +923,35 @@ private func abbreviate(_ path: String) -> String {
     return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
 }
 
+/// Puts `leading` and `trailing` on one line when they fit, with the gap in
+/// between; otherwise on two lines, the first flush left and the second
+/// flush right. Children should have fixed widths so the fit is measurable.
+private struct SplitBar<Leading: View, Trailing: View>: View {
+    var spacing: CGFloat = 12
+    @ViewBuilder var leading: Leading
+    @ViewBuilder var trailing: Trailing
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: spacing) {
+                leading
+                Spacer(minLength: spacing)
+                trailing
+            }
+            VStack(spacing: 8) {
+                HStack(spacing: spacing) {
+                    leading
+                    Spacer(minLength: 0)
+                }
+                HStack(spacing: spacing) {
+                    Spacer(minLength: 0)
+                    trailing
+                }
+            }
+        }
+    }
+}
+
 /// What the list can be sorted by.
 private enum SortKey: String, CaseIterable {
     case size, name, files, kind, opened
@@ -1246,10 +1299,13 @@ private struct SunburstChart: View {
                     Text((hovered ?? focus).name)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(2).multilineTextAlignment(.center)
+                        .lineLimit(1).truncationMode(.tail)
+                        .minimumScaleFactor(0.7)
                     Text(bytes((hovered ?? focus).size))
                         .font(.system(size: 11, design: .rounded))
                         .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                        .fixedSize()
                 }
                 .frame(width: inner * 1.7)
                 .position(center)
