@@ -647,6 +647,10 @@ final class FolderScanner: ObservableObject {
             do {
                 try FileManager.default.trashItem(at: node.url, resultingItemURL: nil)
                 detach(node)
+            } catch where Self.isGone(node) {
+                // Already deleted or moved outside the app since the scan (or
+                // the saved scan): nothing to move, so just drop it from the tree.
+                detach(node)
             } catch {
                 failures.append("“\(node.name)”: \(error.localizedDescription)")
             }
@@ -663,6 +667,8 @@ final class FolderScanner: ObservableObject {
         for node in Self.outermost(nodes) {
             do {
                 try FileManager.default.removeItem(at: node.url)
+                detach(node)
+            } catch where Self.isGone(node) {
                 detach(node)
             } catch {
                 failures.append("“\(node.name)”: \(error.localizedDescription)")
@@ -684,6 +690,13 @@ final class FolderScanner: ObservableObject {
             lastError = "\(failed) item(s) could not be deleted — they may need an admin password. Empty the Trash from Finder for those."
         }
         refreshTrash()
+    }
+
+    /// The item is no longer on disk: lstat says "no such file". A permission
+    /// error does not count, and a dangling symlink is still present.
+    private static func isGone(_ node: FolderNode) -> Bool {
+        var st = stat()
+        return lstat(node.url.path, &st) != 0 && errno == ENOENT
     }
 
     /// Drops items that sit inside another selected item: moving the outer one
