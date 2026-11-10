@@ -133,7 +133,8 @@ struct FolderTreeSection: View {
 
     private var lastScanText: String {
         guard let date = scanner.lastScan else {
-            return "macOS may ask for access to Desktop, Documents and other folders."
+            return hasFullDiskAccess ? "Not scanned yet."
+                                     : "macOS may ask for access to Desktop, Documents and other folders."
         }
         let when = date.formatted(date: .abbreviated, time: .shortened)
         guard scanner.isRestored else { return "Last scan \(when)" }
@@ -168,20 +169,13 @@ struct FolderTreeSection: View {
                     .disabled(scanner.isScanning)
                     .help("Pick any folder or drive to scan. You can also drop a folder onto this bar.")
                 } trailing: {
-                    Button {
-                        openFullDiskAccess()
-                    } label: {
-                        if hasFullDiskAccess {
-                            Label("Full Disk Access", systemImage: "checkmark.shield.fill")
-                        } else {
-                            Text("Full Disk Access…")
-                        }
+                    // Only needed until access is granted; checked again each
+                    // time the app comes back to the front.
+                    if !hasFullDiskAccess {
+                        Button("Full Disk Access…") { openFullDiskAccess() }
+                            .fixedSize()
+                            .help("A complete scan, the Trash included, needs MacCharge in System Settings → Privacy & Security → Full Disk Access.")
                     }
-                    .foregroundStyle(hasFullDiskAccess ? Theme.green : Theme.textPrimary)
-                    .fixedSize()
-                    .help(hasFullDiskAccess
-                          ? "MacCharge has Full Disk Access, so scans can read the Trash and private folders."
-                          : "A complete scan, the Trash included, needs MacCharge in System Settings → Privacy & Security → Full Disk Access.")
                     if scanner.isScanning {
                         Button("Stop") { scanner.cancel() }
                             .fixedSize()
