@@ -395,7 +395,7 @@ struct FolderTreeSection: View {
             Toggle("Color by share", isOn: $colorByShare)
                 .toggleStyle(.checkbox)
                 .fixedSize()
-                .help("Mark items yellow (≥10%), orange (≥25%) or red (≥50%) by how much of their parent folder they take.")
+                .help("Mark items yellow (≥20%), orange (≥40%) or red (≥60%) by how much of their parent folder they take.")
             Toggle("Chart", isOn: $showChart)
                 .toggleStyle(.checkbox)
                 .fixedSize()
@@ -432,9 +432,9 @@ struct FolderTreeSection: View {
                 if #available(macOS 13, *) {
                     ViewThatFits(in: .horizontal) {
                         HStack(spacing: 8) {
-                            legendDot(Theme.yellow, "10%")
-                            legendDot(Theme.orange, "25%")
-                            legendDot(Theme.red, "50%")
+                            legendDot(Theme.yellow, "20%")
+                            legendDot(Theme.orange, "40%")
+                            legendDot(Theme.red, "60%")
                         }
                         .fixedSize()
                         Color.clear.frame(width: 0, height: 0)
@@ -651,9 +651,9 @@ struct FolderTreeSection: View {
 
     private func shareColor(_ share: Double) -> Color? {
         switch share {
-        case 0.5...: return Theme.red
-        case 0.25...: return Theme.orange
-        case 0.10...: return Theme.yellow
+        case 0.60...: return Theme.red
+        case 0.40...: return Theme.orange
+        case 0.20...: return Theme.yellow
         default: return nil
         }
     }
