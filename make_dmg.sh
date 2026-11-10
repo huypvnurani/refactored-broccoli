@@ -13,7 +13,7 @@ cd "$(dirname "$0")"
 
 APP="MacCharge.app"
 # macOS 12 edition: main's version plus a fourth number for changes made
-# only on this branch (1.3.0.2, 1.3.0.2, …).
+# only on this branch (1.3.0.1, 1.3.0.2, …).
 VERSION="1.3.0.2"
 NOTARY_PROFILE="${NOTARY_PROFILE:-maccharge-notary}"
 
