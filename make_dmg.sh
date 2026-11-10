@@ -70,9 +70,24 @@ mkdir -p dist
 DMG="dist/MacCharge-$VERSION.dmg"
 rm -f "$DMG"
 echo "▸ Creating $DMG…"
-hdiutil create -volname "MacCharge" -srcfolder "$STAGING" \
-    -ov -format UDZO "$DMG" >/dev/null
-rm -rf "$STAGING"
+# The installer window — background picture, the app on the left, Applications
+# on the right, big icons — is laid out by dmgbuild, which writes the Finder
+# view settings itself (no Finder scripting). It lives in a private venv.
+VENV=".build/dmgvenv"
+if [ ! -x "$VENV/bin/dmgbuild" ]; then
+  echo "▸ Setting up dmgbuild in $VENV…"
+  python3 -m venv "$VENV" && "$VENV/bin/pip" install -q dmgbuild
+fi
+BG_DIR="$(mktemp -d)"
+python3 make_dmg_background.py "$BG_DIR" >/dev/null
+# One TIFF holding the 1x and 2x pictures, so Retina screens get the sharp one.
+tiffutil -cathidpicheck "$BG_DIR/dmg-background.png" "$BG_DIR/dmg-background@2x.png" \
+    -out "$BG_DIR/dmg-background.tiff" 2>/dev/null
+rm "$STAGING/Applications"   # dmgbuild adds its own link
+"$VENV/bin/dmgbuild" -s dmg_settings.py \
+    -D staging="$STAGING" -D background="$BG_DIR/dmg-background.tiff" \
+    "MacCharge" "$DMG" >/dev/null
+rm -rf "$STAGING" "$BG_DIR"
 
 # Sign + notarize the disk image itself so the download is trusted too.
 if [ -n "$SIGNER" ]; then
