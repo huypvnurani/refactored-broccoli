@@ -45,6 +45,11 @@ struct FolderTreeSection: View {
             gapCard
         }
         .onAppear(perform: installKeyMonitor)
+        // Back from Finder (where the Trash may have just been emptied) while the
+        // Trash tab is open: measure it again.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            if tab == .trash { scanner.refreshTrash() }
+        }
         // Coming back from System Settings: pick up a newly granted permission.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             hasFullDiskAccess = FullDiskAccess.isGranted
@@ -149,13 +154,9 @@ struct FolderTreeSection: View {
         Card(padding: 14) {
             VStack(alignment: .leading, spacing: 10) {
                 SplitBar(spacing: 12) {
-                    Picker("", selection: scopeBinding) {
-                        Text("Whole Mac").tag(ScopeChoice.wholeMac)
-                        Text("Home").tag(ScopeChoice.home)
-                        Text(customName ?? "Folder…").tag(ScopeChoice.folder)
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
+                    SegmentBar(selection: scopeBinding, items: [
+                        (.wholeMac, "Whole Mac"), (.home, "Home"), (.folder, customName ?? "Folder…"),
+                    ])
                     .frame(width: 300)
                     .disabled(scanner.isScanning)
                     Button {
@@ -366,14 +367,11 @@ struct FolderTreeSection: View {
     /// on a narrow window the right half drops to its own line.
     private var treeHeader: some View {
         SplitBar(spacing: 12) {
-            Picker("", selection: tabBinding) {
-                Text("Folders").tag(Tab.folders)
-                Text("Large Files").tag(Tab.largeFiles)
-                Text(scanner.trash.map { "Trash · \(bytes($0.size))" } ?? "Trash").tag(Tab.trash)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 320)
+            SegmentBar(selection: tabBinding, items: [
+                (.folders, "Folders"), (.largeFiles, "Large Files"),
+                (.trash, scanner.trash.map { "Trash · \(bytes($0.size))" } ?? "Trash"),
+            ])
+            .frame(width: 340)
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(Theme.textMuted)
                 TextField("Filter by name", text: $query)
@@ -863,6 +861,10 @@ struct FolderTreeSection: View {
 
     private var tabBinding: Binding<Tab> {
         Binding(get: { tab }, set: { new in
+            // Coming (back) to the Trash re-measures it: it may have been
+            // emptied in Finder since.
+            if new == .trash { scanner.refreshTrash() }
+            guard new != tab else { return }
             tab = new
             selection = []
             cursor = nil
@@ -955,6 +957,50 @@ private func bytes(_ n: Int64) -> String {
 private func abbreviate(_ path: String) -> String {
     let home = FileManager.default.homeDirectoryForCurrentUser.path
     return path.hasPrefix(home) ? "~" + path.dropFirst(home.count) : path
+}
+
+/// A segmented control drawn in SwiftUI: equal-width segments in a fixed frame
+/// with a sliding highlight. NSSegmentedControl (Picker .segmented) re-sizes
+/// itself to the selected label for a moment on every change, which made the
+/// whole toolbar stretch and snap back.
+private struct SegmentBar<Value: Hashable>: View {
+    @Binding var selection: Value
+    let items: [(Value, String)]
+
+    @Namespace private var highlight
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(items.indices, id: \.self) { i in
+                let (value, title) = items[i]
+                let isOn = value == selection
+                Button {
+                    withAnimation(.easeOut(duration: 0.18)) { selection = value }
+                } label: {
+                    Text(title)
+                        .font(.system(size: 12.5, weight: isOn ? .semibold : .medium))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .foregroundStyle(isOn ? Color.white : Theme.textSecondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 5)
+                        .background {
+                            if isOn {
+                                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    .fill(Color.accentColor)
+                                    .matchedGeometryEffect(id: "highlight", in: highlight)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(2)
+        .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .opacity(isEnabled ? 1 : 0.5)
+    }
 }
 
 /// Puts `leading` and `trailing` on one line when they fit, with the gap in
