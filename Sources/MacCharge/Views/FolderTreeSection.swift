@@ -27,6 +27,8 @@ struct FolderTreeSection: View {
     @State private var pendingDelete: [FolderNode] = []
     @State private var confirmEmpty = false
     @State private var dropTargeted = false
+    @State private var hasFullDiskAccess = FullDiskAccess.isGranted
+    @State private var showFullDiskAccessHelp = false
     @AppStorage("folderTree.showGapDetails") private var showGapDetails = false
     @State private var keyMonitor: Any?
     @AppStorage("folderTree.showChart") private var showChart = false
@@ -43,6 +45,23 @@ struct FolderTreeSection: View {
             gapCard
         }
         .onAppear(perform: installKeyMonitor)
+        // Coming back from System Settings: pick up a newly granted permission.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            hasFullDiskAccess = FullDiskAccess.isGranted
+        }
+        .alert("Add MacCharge to Full Disk Access", isPresented: $showFullDiskAccessHelp) {
+            Button("Open System Settings") { FullDiskAccess.openSettings() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("""
+                 macOS doesn't list apps there by itself. System Settings will open on Full Disk Access \
+                 and Finder will show MacCharge:
+
+                 1. Drag MacCharge from Finder into the list (or click + and choose it).
+                 2. Turn the switch next to MacCharge on.
+                 3. Come back and press Rescan.
+                 """)
+        }
         .onDisappear(perform: removeKeyMonitor)
         .alert(trashTitle, isPresented: present($pendingTrash)) {
             Button("Move to Trash", role: .destructive) { scanner.moveToTrash(pendingTrash) }
@@ -148,9 +167,20 @@ struct FolderTreeSection: View {
                     .disabled(scanner.isScanning)
                     .help("Pick any folder or drive to scan. You can also drop a folder onto this bar.")
                 } trailing: {
-                    Button("Full Disk Access…") { openFullDiskAccess() }
-                        .fixedSize()
-                        .help("A complete scan, the Trash included, needs MacCharge in System Settings → Privacy & Security → Full Disk Access.")
+                    Button {
+                        openFullDiskAccess()
+                    } label: {
+                        if hasFullDiskAccess {
+                            Label("Full Disk Access", systemImage: "checkmark.shield.fill")
+                        } else {
+                            Text("Full Disk Access…")
+                        }
+                    }
+                    .foregroundStyle(hasFullDiskAccess ? Theme.green : Theme.textPrimary)
+                    .fixedSize()
+                    .help(hasFullDiskAccess
+                          ? "MacCharge has Full Disk Access, so scans can read the Trash and private folders."
+                          : "A complete scan, the Trash included, needs MacCharge in System Settings → Privacy & Security → Full Disk Access.")
                     if scanner.isScanning {
                         Button("Stop") { scanner.cancel() }
                             .fixedSize()
@@ -912,9 +942,13 @@ struct FolderTreeSection: View {
         Binding(get: { !items.wrappedValue.isEmpty }, set: { if !$0 { items.wrappedValue = [] } })
     }
 
+    /// Already granted: just open the pane. Otherwise explain the steps first,
+    /// since macOS never lists an app there on its own.
     private func openFullDiskAccess() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
-            NSWorkspace.shared.open(url)
+        if hasFullDiskAccess {
+            FullDiskAccess.openSettings()
+        } else {
+            showFullDiskAccessHelp = true
         }
     }
 }
@@ -931,6 +965,11 @@ private func abbreviate(_ path: String) -> String {
 /// Puts `leading` and `trailing` on one line when they fit, with the gap in
 /// between; otherwise on two lines, the first flush left and the second
 /// flush right. Children should have fixed widths so the fit is measurable.
+///
+/// A custom Layout rather than ViewThatFits: ViewThatFits builds one copy of the
+/// content per candidate, so every flip between one and two lines recreated the
+/// segmented control and text field, which popped in at their natural size and
+/// then snapped to the set width. Here the same views are only moved.
 private struct SplitBar<Leading: View, Trailing: View>: View {
     var spacing: CGFloat = 12
     @ViewBuilder var leading: Leading
@@ -938,21 +977,14 @@ private struct SplitBar<Leading: View, Trailing: View>: View {
 
     var body: some View {
         if #available(macOS 13, *) {
-            ViewThatFits(in: .horizontal) {
-                oneLine
-                twoLines
+            SplitLayout(spacing: spacing) {
+                HStack(spacing: spacing) { leading }
+                HStack(spacing: spacing) { trailing }
             }
         } else {
-            // macOS 12 cannot test the fit, so it always takes the layout that fits.
+            // macOS 12 has no Layout to test the fit, so it always takes the
+            // layout that fits.
             twoLines
-        }
-    }
-
-    private var oneLine: some View {
-        HStack(spacing: spacing) {
-            leading
-            Spacer(minLength: spacing)
-            trailing
         }
     }
 
@@ -966,6 +998,48 @@ private struct SplitBar<Leading: View, Trailing: View>: View {
                 Spacer(minLength: 0)
                 trailing
             }
+        }
+    }
+}
+
+/// Lays out exactly two subviews: side by side when both fit at their ideal
+/// width, otherwise stacked with the second right-aligned.
+@available(macOS 13, *)
+private struct SplitLayout: Layout {
+    var spacing: CGFloat
+    var lineSpacing: CGFloat = 8
+
+    private func measure(_ subviews: Subviews) -> (CGSize, CGSize) {
+        (subviews[0].sizeThatFits(.unspecified), subviews[1].sizeThatFits(.unspecified))
+    }
+
+    private func fits(_ l: CGSize, _ t: CGSize, in width: CGFloat) -> Bool {
+        l.width + spacing + t.width <= width
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard subviews.count == 2 else { return .zero }
+        let (l, t) = measure(subviews)
+        let width = proposal.width ?? (l.width + spacing + t.width)
+        if fits(l, t, in: width) {
+            return CGSize(width: width, height: max(l.height, t.height))
+        }
+        return CGSize(width: width, height: l.height + lineSpacing + t.height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard subviews.count == 2 else { return }
+        let (l, t) = measure(subviews)
+        if fits(l, t, in: bounds.width) {
+            subviews[0].place(at: CGPoint(x: bounds.minX, y: bounds.midY),
+                              anchor: .leading, proposal: ProposedViewSize(l))
+            subviews[1].place(at: CGPoint(x: bounds.maxX, y: bounds.midY),
+                              anchor: .trailing, proposal: ProposedViewSize(t))
+        } else {
+            subviews[0].place(at: CGPoint(x: bounds.minX, y: bounds.minY),
+                              anchor: .topLeading, proposal: ProposedViewSize(l))
+            subviews[1].place(at: CGPoint(x: bounds.maxX, y: bounds.minY + l.height + lineSpacing),
+                              anchor: .topTrailing, proposal: ProposedViewSize(t))
         }
     }
 }
